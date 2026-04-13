@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rate Limiter Simulator</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main class="container">
+    <header class="hero">
+      <h1>Rate Limiter Simulator</h1>
+      <p>Simulate traffic, latency distributions, limiter windows, and outcomes (`served`, `delayed`, `429`).</p>
+    </header>
+
+    <div class="layout">
+      <aside class="sidebar">
+        <section class="panel controls">
+          <h2>Traffic Controls</h2>
+          <div class="grid">
+            <label>Duration (s)
+              <input id="durationSec" type="number" min="5" step="1" value="60" />
+            </label>
+            <label>Step (ms)
+              <input id="stepMs" type="number" min="10" step="10" value="100" />
+            </label>
+            <label>Target RPS
+              <input id="rps" type="number" min="0" step="1" value="80" />
+            </label>
+            <label>Burst Factor (0-1)
+              <input id="burstiness" type="number" min="0" max="1" step="0.05" value="0.25" />
+            </label>
+            <label>Max Concurrent
+              <input id="maxConcurrent" type="number" min="1" step="1" value="40" />
+            </label>
+            <label>Queue Capacity
+              <input id="queueCapacity" type="number" min="0" step="1" value="300" />
+            </label>
+            <label>Max Queue Wait (ms)
+              <input id="maxQueueWaitMs" type="number" min="0" step="10" value="1200" />
+            </label>
+          </div>
+        </section>
+
+        <section class="panel controls">
+          <h2>Rate Limiter</h2>
+          <div class="grid">
+            <label>Limiter Type
+              <select id="limiterType">
+                <option value="fixed">Fixed Window</option>
+                <option value="sliding">Sliding Window</option>
+              </select>
+            </label>
+          </div>
+          <div class="window-stack">
+            <div class="window-head">
+              <strong>Cascaded Windows</strong>
+              <button id="addWindowBtn" type="button">Add Window</button>
+            </div>
+            <div id="windowRows"></div>
+          </div>
+          <p class="hint">Each request must pass all windows in cascade. Example: 1s/60 + 10s/500 + 60s/2,000.</p>
+        </section>
+
+        <section class="panel controls">
+          <h2>Service Latency</h2>
+          <div class="grid">
+            <label>Distribution
+              <select id="latencyDist">
+                <option value="constant">Constant</option>
+                <option value="uniform">Uniform</option>
+                <option value="normal">Normal</option>
+                <option value="lognormal">Log-normal</option>
+                <option value="exponential">Exponential</option>
+              </select>
+            </label>
+            <label>Param A
+              <input id="latA" type="number" step="1" value="120" />
+            </label>
+            <label>Param B
+              <input id="latB" type="number" step="1" value="60" />
+            </label>
+          </div>
+          <p class="hint">
+            Params: constant=A(ms), uniform=[A,B], normal=mean(A)/std(B), log-normal=mu(A)/sigma(B), exponential=mean(A).
+          </p>
+        </section>
+
+        <section class="panel controls">
+          <h2>Rate-Limiter Latency</h2>
+          <div class="grid">
+            <label>Decision Dist
+              <select id="rlLatencyDist">
+                <option value="constant">Constant</option>
+                <option value="uniform">Uniform</option>
+                <option value="normal">Normal</option>
+                <option value="lognormal">Log-normal</option>
+                <option value="exponential">Exponential</option>
+              </select>
+            </label>
+            <label>Decision Param A
+              <input id="rlLatA" type="number" step="1" value="8" />
+            </label>
+            <label>Decision Param B
+              <input id="rlLatB" type="number" step="1" value="4" />
+            </label>
+          </div>
+          <p class="hint">
+            This is processing latency of the rate limiter itself. Higher values increase pending decisions and can amplify queueing/429 impact.
+          </p>
+        </section>
+
+        <section class="panel actions">
+          <button id="runBtn">Run Simulation</button>
+        </section>
+      </aside>
+
+      <section class="content">
+        <section class="panel metrics">
+          <h2>Analytics</h2>
+          <div id="kpis" class="kpi-grid"></div>
+        </section>
+
+        <section class="panel chart">
+          <h2>Combined Time-Series</h2>
+          <div id="seriesToggles" class="toggles"></div>
+          <canvas id="mergedChart" width="1100" height="360"></canvas>
+        </section>
+
+        <section class="panel chart">
+          <h2>Latency Shape</h2>
+          <canvas id="latencyChart" width="1100" height="260"></canvas>
+        </section>
+
+      </section>
+    </div>
+  </main>
+  <script src="./app.js"></script>
+</body>
+</html>
