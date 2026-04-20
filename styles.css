@@ -45,6 +45,9 @@ body {
 }
 
 .app-header {
+  position: sticky;
+  top: 12px;
+  z-index: 30;
   min-height: 88px;
   display: flex;
   align-items: center;
@@ -169,6 +172,7 @@ body {
   top: 16px;
   max-height: calc(100vh - 32px);
   overflow: auto;
+  padding-top: 86px;
   padding-right: 3px;
   scrollbar-gutter: stable;
   counter-reset: control-step;
@@ -194,11 +198,17 @@ body {
 }
 
 .run-panel {
+  position: fixed;
+  top: 124px;
+  left: max(24px, calc((100vw - 1560px) / 2 + 24px));
+  z-index: 25;
+  width: min(420px, calc(100vw - 48px));
   display: grid;
   grid-template-columns: 1fr auto;
   align-items: center;
   gap: 14px;
   padding: 14px;
+  box-shadow: var(--shadow-2);
 }
 
 .panel-heading {
@@ -558,6 +568,11 @@ canvas {
   border-radius: var(--radius);
 }
 
+canvas:focus {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+}
+
 .chart canvas {
   min-height: 280px;
 }
@@ -666,11 +681,15 @@ canvas {
     max-height: none;
     grid-template-columns: repeat(2, minmax(320px, 1fr));
     overflow: visible;
+    padding-top: 0;
     padding-right: 0;
   }
 
   .run-panel {
+    position: sticky;
+    top: 12px;
     grid-column: 1 / -1;
+    width: auto;
   }
 }
 
@@ -680,8 +699,19 @@ canvas {
   }
 
   .app-header {
+    position: static;
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .run-panel {
+    position: fixed;
+    top: auto;
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    z-index: 40;
+    width: auto;
   }
 
   .guide-strip {

@@ -93,6 +93,10 @@
               <input id="maxQueueWaitMs" type="number" min="0" step="10" value="1500" />
               <span class="field-unit">milliseconds</span>
             </label>
+            <div class="mini-chart">
+              <span id="trafficPreviewLabel">90 rps with 40% burst wave over 30s</span>
+              <canvas id="trafficPreview" width="220" height="56"></canvas>
+            </div>
           </div>
         </section>
 
@@ -205,7 +209,7 @@
           <div id="kpis" class="kpi-grid"></div>
         </section>
 
-        <section class="panel chart">
+        <section id="mainChartPanel" class="panel chart">
           <div class="panel-heading">
             <div>
               <p class="eyebrow">Time series</p>
@@ -215,7 +219,7 @@
           </div>
           <div id="seriesToggles" class="toggles"></div>
           <div class="chart-frame">
-            <canvas id="mergedChart" width="1100" height="390"></canvas>
+            <canvas id="mergedChart" width="1100" height="390" tabindex="-1"></canvas>
             <div id="chartTooltip" class="chart-tooltip" hidden></div>
           </div>
         </section>
@@ -235,6 +239,8 @@
       </section>
     </div>
   </main>
+  <script src="./simulation.js"></script>
+  <script src="./charts.js"></script>
   <script src="./app.js"></script>
 </body>
 </html>
