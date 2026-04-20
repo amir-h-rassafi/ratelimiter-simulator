@@ -7,42 +7,52 @@
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <a class="github-cta" href="https://github.com/amir-h-rassafi/ratelimit-simulator" target="_blank" rel="noreferrer" aria-label="Support us on GitHub with a star">
-    <svg aria-hidden="true" viewBox="0 0 16 16" width="18" height="18">
-      <path d="M8 0C3.58 0 0 3.67 0 8.2c0 3.62 2.29 6.69 5.47 7.78.4.08.55-.18.55-.4 0-.2-.01-.86-.01-1.56-2.01.38-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.16-.68-.55-.01-.56.63-.01 1.08.59 1.23.84.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.1-1.78-.21-3.64-.91-3.64-4.05 0-.89.31-1.62.82-2.2-.08-.21-.36-1.04.08-2.17 0 0 .67-.22 2.2.84A7.42 7.42 0 0 1 8 3.99c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.13.16 1.96.08 2.17.51.58.82 1.31.82 2.2 0 3.15-1.87 3.84-3.65 4.05.29.26.54.75.54 1.51 0 1.1-.01 1.98-.01 2.25 0 .22.15.48.55.4A8.1 8.1 0 0 0 16 8.2C16 3.67 12.42 0 8 0Z" />
-    </svg>
-    <span>Support us on GitHub</span>
-    <strong>Star</strong>
-  </a>
   <main class="container">
     <header class="app-header">
       <div class="hero">
-        <p class="eyebrow">Rate limit operations</p>
+        <p class="eyebrow">Simulator</p>
         <h1>Rate Limiter Simulator</h1>
-        <p>Model burst traffic, limiter windows, queue pressure, decision latency, and 429 outcomes.</p>
+        <p>Traffic arrives first, policy rules decide admission, then accepted requests compete for backend capacity.</p>
       </div>
+      <a class="github-cta" href="https://github.com/amir-h-rassafi/ratelimit-simulator" target="_blank" rel="noreferrer" aria-label="GitHub repository">
+        <svg aria-hidden="true" viewBox="0 0 16 16" width="18" height="18">
+          <path d="M8 0C3.58 0 0 3.67 0 8.2c0 3.62 2.29 6.69 5.47 7.78.4.08.55-.18.55-.4 0-.2-.01-.86-.01-1.56-2.01.38-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.16-.68-.55-.01-.56.63-.01 1.08.59 1.23.84.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.1-1.78-.21-3.64-.91-3.64-4.05 0-.89.31-1.62.82-2.2-.08-.21-.36-1.04.08-2.17 0 0 .67-.22 2.2.84A7.42 7.42 0 0 1 8 3.99c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.13.16 1.96.08 2.17.51.58.82 1.31.82 2.2 0 3.15-1.87 3.84-3.65 4.05.29.26.54.75.54 1.51 0 1.1-.01 1.98-.01 2.25 0 .22.15.48.55.4A8.1 8.1 0 0 0 16 8.2C16 3.67 12.42 0 8 0Z" />
+        </svg>
+        <span>GitHub</span>
+      </a>
     </header>
+
+    <section class="guide-strip" aria-label="Simulation flow">
+      <div>
+        <strong>1. Traffic</strong>
+        <span>Generate arrivals with RPS and burst shape.</span>
+      </div>
+      <div>
+        <strong>2. Rate limit</strong>
+        <span>Each request must pass every sliding window rule.</span>
+      </div>
+      <div>
+        <strong>3. Backend</strong>
+        <span>Accepted requests run, queue, or time out.</span>
+      </div>
+      <div>
+        <strong>4. Read chart</strong>
+        <span>Arrivals always stay visible as the baseline.</span>
+      </div>
+    </section>
 
     <div class="layout">
       <aside class="sidebar">
         <section class="run-panel">
           <div class="panel-heading">
             <div>
-              <p class="eyebrow">Scenario runner</p>
-              <h2>Apply configuration</h2>
+              <p class="eyebrow">Run</p>
+              <h2>Simulation</h2>
+              <p class="panel-copy">Apply current inputs and refresh the charts.</p>
             </div>
-            <span class="status-pill">Ready</span>
-          </div>
-          <div class="run-copy">
-            <p>Refresh analytics, time series, and latency distribution from the current inputs.</p>
-            <ul class="run-checklist" aria-label="Simulation status">
-              <li id="checkInputs" data-state="ok">Inputs captured</li>
-              <li id="checkResults" data-state="ok">Results current</li>
-            </ul>
           </div>
           <button id="runBtn" class="run-button" type="button">
             <span>Run Simulation</span>
-            <span aria-hidden="true">Enter</span>
           </button>
         </section>
 
@@ -51,12 +61,12 @@
             <div>
               <p class="eyebrow">Inputs</p>
               <h2>Traffic</h2>
+              <p class="panel-copy">Controls how many requests enter the system.</p>
             </div>
-            <span class="panel-badge">Poisson arrivals</span>
           </div>
           <div class="grid">
             <label><span>Duration</span>
-              <input id="durationSec" type="number" min="5" step="1" value="60" />
+              <input id="durationSec" type="number" min="5" step="1" value="30" />
               <span class="field-unit">seconds</span>
             </label>
             <label><span>Step</span>
@@ -64,23 +74,23 @@
               <span class="field-unit">milliseconds</span>
             </label>
             <label><span>Target RPS</span>
-              <input id="rps" type="number" min="0" step="1" value="80" />
+              <input id="rps" type="number" min="0" step="1" value="90" />
               <span class="field-unit">requests/sec</span>
             </label>
             <label><span>Burst factor</span>
-              <input id="burstiness" type="number" min="0" max="1" step="0.05" value="0.25" />
+              <input id="burstiness" type="number" min="0" max="1" step="0.05" value="0.4" />
               <span class="field-unit">0 to 1</span>
             </label>
             <label><span>Max concurrent</span>
-              <input id="maxConcurrent" type="number" min="1" step="1" value="40" />
+              <input id="maxConcurrent" type="number" min="1" step="1" value="24" />
               <span class="field-unit">in flight</span>
             </label>
             <label><span>Queue capacity</span>
-              <input id="queueCapacity" type="number" min="0" step="1" value="300" />
+              <input id="queueCapacity" type="number" min="0" step="1" value="240" />
               <span class="field-unit">requests</span>
             </label>
             <label><span>Max queue wait</span>
-              <input id="maxQueueWaitMs" type="number" min="0" step="10" value="1200" />
+              <input id="maxQueueWaitMs" type="number" min="0" step="10" value="1500" />
               <span class="field-unit">milliseconds</span>
             </label>
           </div>
@@ -91,27 +101,29 @@
             <div>
               <p class="eyebrow">Policy</p>
               <h2>Rate Limiter</h2>
+              <p class="panel-copy">Rules are evaluated in order. A request rejected by any rule becomes a 429.</p>
             </div>
-            <span class="panel-badge">Cascade</span>
           </div>
           <div class="grid compact-grid">
             <label><span>Window algorithm</span>
               <select id="limiterType">
                 <option value="fixed">Fixed window counter</option>
-                <option value="sliding">Sliding rolling window</option>
+                <option value="sliding" selected>Sliding rolling window</option>
               </select>
               <span class="field-unit">How requests are counted inside each window</span>
             </label>
           </div>
-          <p id="limiterAlgorithmNote" class="algorithm-note">Every cascaded row below uses fixed window counters: each counter resets at the window boundary.</p>
           <div class="window-stack">
             <div class="window-head">
-              <strong>Cascaded windows</strong>
-              <button id="addWindowBtn" type="button">Add Window</button>
+              <div>
+                <strong>Rate limit rules</strong>
+                <span>Every request must pass all rules, top to bottom.</span>
+              </div>
+              <button id="addWindowBtn" type="button">Add rule</button>
             </div>
             <div id="windowRows"></div>
+            <p id="windowEmpty" class="window-empty" hidden>No rate-limit rules. Requests bypass policy limits; queue and service limits can still return 429s.</p>
           </div>
-          <p class="hint">Each request must pass all windows in cascade. Window length is entered in seconds. Example: 1s/60 + 10s/500 + 60s/2,000.</p>
         </section>
 
         <section class="panel controls">
@@ -119,8 +131,8 @@
             <div>
               <p class="eyebrow">Backend</p>
               <h2>Service Latency</h2>
+              <p class="panel-copy">Models how long accepted requests occupy backend capacity.</p>
             </div>
-            <span class="panel-badge">Distribution</span>
           </div>
           <div class="grid">
             <label><span>Distribution</span>
@@ -133,23 +145,17 @@
               </select>
             </label>
             <label><span id="latALabel">Mean latency</span>
-              <input id="latA" type="number" step="1" value="120" />
+              <input id="latA" type="number" step="1" value="800" />
               <span id="latAHelp" class="field-unit">milliseconds</span>
             </label>
             <label><span id="latBLabel">Std deviation</span>
-              <input id="latB" type="number" step="1" value="60" />
+              <input id="latB" type="number" step="1" value="35" />
               <span id="latBHelp" class="field-unit">milliseconds</span>
             </label>
-          </div>
-          <p class="hint">
-            The labels change with the selected distribution.
-          </p>
-          <div class="mini-chart">
-            <div>
-              <strong>Shape preview</strong>
+            <div class="mini-chart">
               <span id="latencyPreviewLabel">Normal / Gaussian</span>
+              <canvas id="latencyPreview" width="220" height="56"></canvas>
             </div>
-            <canvas id="latencyPreview" width="360" height="120"></canvas>
           </div>
         </section>
 
@@ -158,8 +164,8 @@
             <div>
               <p class="eyebrow">Control plane</p>
               <h2>Rate-Limiter Latency</h2>
+              <p class="panel-copy">Models time spent deciding allow or reject before backend admission.</p>
             </div>
-            <span class="panel-badge">Decision time</span>
           </div>
           <div class="grid">
             <label><span>Decision distribution</span>
@@ -179,16 +185,10 @@
               <input id="rlLatB" type="number" step="1" value="4" />
               <span id="rlLatBHelp" class="field-unit">ignored for constant/exponential</span>
             </label>
-          </div>
-          <p class="hint">
-            Processing latency of the rate limiter itself. Higher values increase pending decisions and can amplify queueing/429 impact.
-          </p>
-          <div class="mini-chart">
-            <div>
-              <strong>Shape preview</strong>
+            <div class="mini-chart">
               <span id="rlLatencyPreviewLabel">Constant</span>
+              <canvas id="rlLatencyPreview" width="220" height="56"></canvas>
             </div>
-            <canvas id="rlLatencyPreview" width="360" height="120"></canvas>
           </div>
         </section>
       </aside>
@@ -199,8 +199,8 @@
             <div>
               <p class="eyebrow">Result</p>
               <h2>Analytics</h2>
+              <p class="panel-copy">Summary from the latest run.</p>
             </div>
-            <span class="panel-badge">Current run</span>
           </div>
           <div id="kpis" class="kpi-grid"></div>
         </section>
@@ -210,8 +210,8 @@
             <div>
               <p class="eyebrow">Time series</p>
               <h2>Capacity, Admissions, and Rejections</h2>
+              <p class="panel-copy">Arrivals are always shown as the input baseline.</p>
             </div>
-            <span class="panel-badge">Shared scale</span>
           </div>
           <div id="seriesToggles" class="toggles"></div>
           <div class="chart-frame">
@@ -225,8 +225,8 @@
             <div>
               <p class="eyebrow">Distribution</p>
               <h2>Latency Shape</h2>
+              <p class="panel-copy">Observed end-to-end latency for served requests.</p>
             </div>
-            <span class="panel-badge">Histogram</span>
           </div>
           <div class="chart-frame">
             <canvas id="latencyChart" width="1100" height="300"></canvas>

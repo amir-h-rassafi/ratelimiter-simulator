@@ -333,7 +333,7 @@ function renderKpis(result) {
     { name: "Delayed Served", value: formatNum(totals.delayedServed), kind: "queue" },
     { name: "429 Total", value: `${formatNum(totals.rate429)} (${totals.rate429Pct.toFixed(1)}%)`, kind: "danger" },
     { name: "Queue Timeout 429", value: formatNum(totals.droppedWait), kind: "danger" },
-    { name: "Most Blocking Window", value: mostBlocked ? `${mostBlocked.label} (${formatNum(mostBlocked.blocked)})` : "-", kind: "queue" },
+    { name: "Limiter Rule", value: mostBlocked ? `${mostBlocked.label} (${formatNum(mostBlocked.blocked)})` : "No rules", kind: "queue" },
     { name: "Latency p95", value: formatMs(latency.p95), kind: "latency" },
     { name: "Avg Queue Delay", value: formatMs(latency.avgQueueDelay), kind: "queue" },
     { name: "Limiter Lat p95", value: formatMs(limiterLatency.p95), kind: "latency" },
@@ -354,52 +354,52 @@ function colorToRgba(hex, alpha) {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+function niceChartMax(value) {
+  if (!Number.isFinite(value) || value <= 0) return 1;
+  const exponent = Math.floor(Math.log10(value));
+  const base = 10 ** exponent;
+  const scaled = value / base;
+  const nice = scaled <= 1 ? 1 : scaled <= 2 ? 2 : scaled <= 5 ? 5 : 10;
+  return nice * base;
+}
+
 function drawAxes(ctx, w, h, pad, maxY, maxXLabel, yLabel) {
   const innerW = w - 2 * pad;
   const innerH = h - 2 * pad;
 
   const bg = ctx.createLinearGradient(0, 0, 0, h);
   bg.addColorStop(0, "#ffffff");
-  bg.addColorStop(1, "#fbfcfd");
+  bg.addColorStop(1, "#ffffff");
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, w, h);
 
-  ctx.strokeStyle = "#e4eaf0";
+  ctx.strokeStyle = "#edf0f2";
   ctx.lineWidth = 1;
-  for (let i = 0; i <= 5; i += 1) {
-    const y = pad + (i * innerH) / 5;
+  for (let i = 0; i <= 4; i += 1) {
+    const y = pad + (i * innerH) / 4;
     ctx.beginPath();
     ctx.moveTo(pad, y);
     ctx.lineTo(w - pad, y);
     ctx.stroke();
 
-    const value = maxY - (i * maxY) / 5;
-    ctx.fillStyle = "#5f6b76";
+    const value = maxY - (i * maxY) / 4;
+    ctx.fillStyle = "#5f6368";
     ctx.font = "12px Inter, Segoe UI, sans-serif";
     ctx.textAlign = "right";
     ctx.fillText(String(Math.round(value)), pad - 10, y + 4);
   }
 
-  for (let i = 0; i <= 6; i += 1) {
-    const x = pad + (i * innerW) / 6;
-    ctx.beginPath();
-    ctx.moveTo(x, pad);
-    ctx.lineTo(x, h - pad);
-    ctx.stroke();
-  }
-
-  ctx.strokeStyle = "#b8c4cf";
+  ctx.strokeStyle = "#dadce0";
   ctx.beginPath();
-  ctx.moveTo(pad, pad);
-  ctx.lineTo(pad, h - pad);
+  ctx.moveTo(pad, h - pad);
   ctx.lineTo(w - pad, h - pad);
   ctx.stroke();
 
-  ctx.fillStyle = "#64717d";
+  ctx.fillStyle = "#5f6368";
   ctx.font = "12px Inter, Segoe UI, sans-serif";
   ctx.textAlign = "left";
-  ctx.fillText(maxXLabel, w - pad - 46, h - 8);
-  if (yLabel) ctx.fillText(yLabel, 8, 12);
+  ctx.fillText(maxXLabel, w - pad - 36, h - 10);
+  if (yLabel) ctx.fillText(yLabel, pad, 18);
 }
 
 function drawLineChart(canvasId, series, maxYOverride, yLabel, hoverIndex = null) {
@@ -407,12 +407,13 @@ function drawLineChart(canvasId, series, maxYOverride, yLabel, hoverIndex = null
   const ctx = canvas.getContext("2d");
   const w = canvas.width;
   const h = canvas.height;
-  const pad = 48;
+  const pad = 46;
   const n = series.length ? series[0].values.length : 0;
 
   ctx.clearRect(0, 0, w, h);
 
-  const maxY = maxYOverride || Math.max(1, ...series.flatMap((s) => s.values));
+  const rawMaxY = maxYOverride || Math.max(1, ...series.flatMap((s) => s.values));
+  const maxY = niceChartMax(rawMaxY * 1.08);
   drawAxes(ctx, w, h, pad, maxY, "time", yLabel);
 
   const innerW = w - 2 * pad;
@@ -424,8 +425,21 @@ function drawLineChart(canvasId, series, maxYOverride, yLabel, hoverIndex = null
     const points = s.values.map((v, i) => ({ x: toX(i), y: toY(v) }));
     if (!points.length) continue;
 
+    if (s.fill) {
+      const fill = ctx.createLinearGradient(0, pad, 0, h - pad);
+      fill.addColorStop(0, colorToRgba(s.color, 0.13));
+      fill.addColorStop(1, colorToRgba(s.color, 0));
+      ctx.fillStyle = fill;
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, h - pad);
+      points.forEach((point) => ctx.lineTo(point.x, point.y));
+      ctx.lineTo(points[points.length - 1].x, h - pad);
+      ctx.closePath();
+      ctx.fill();
+    }
+
     ctx.strokeStyle = s.color;
-    ctx.lineWidth = 2;
+    ctx.lineWidth = s.emphasis ? 2.75 : 2;
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
     ctx.beginPath();
@@ -500,14 +514,21 @@ function drawLatencyHistogram(samples) {
   const barW = innerW / bins.length;
 
   const fill = ctx.createLinearGradient(0, pad, 0, h - pad);
-  fill.addColorStop(0, "#147a55");
-  fill.addColorStop(1, "#9bd1bf");
+  fill.addColorStop(0, "#188038");
+  fill.addColorStop(1, "rgba(24, 128, 56, 0.16)");
   ctx.fillStyle = fill;
   bins.forEach((b, i) => {
     const x = pad + i * barW + 2;
     const bh = (b.count / max) * innerH;
     const y = pad + innerH - bh;
-    ctx.fillRect(x, y, Math.max(1, barW - 4), bh);
+    const bw = Math.max(1, barW - 4);
+    if (ctx.roundRect) {
+      ctx.beginPath();
+      ctx.roundRect(x, y, bw, bh, 3);
+      ctx.fill();
+    } else {
+      ctx.fillRect(x, y, bw, bh);
+    }
   });
 }
 
@@ -600,150 +621,6 @@ function setText(id, text) {
   if (el) el.textContent = text;
 }
 
-const HELP_COPY = {
-  durationSec: {
-    title: "Duration",
-    body: "How long the simulation runs. Longer duration gives a more stable picture, but it can make the run heavier.",
-    visual: ["short run", "60s model", "long run"]
-  },
-  stepMs: {
-    title: "Step",
-    body: "The simulation tick size. 1 ms is supported for fine runs. Larger steps are faster but less detailed.",
-    visual: ["1ms", "100ms", "1000ms"]
-  },
-  rps: {
-    title: "Target RPS",
-    body: "Average incoming request rate before burst shaping. This is the traffic pressure applied to the limiter.",
-    visual: ["requests", "per", "second"]
-  },
-  burstiness: {
-    title: "Burst factor",
-    body: "How wavy the traffic is. 0 is steady traffic. 1 creates stronger peaks and quiet periods.",
-    visual: ["steady", "wave", "burst"]
-  },
-  maxConcurrent: {
-    title: "Max concurrent",
-    body: "Maximum requests the service can process at the same time. When this is full, accepted requests wait in the queue.",
-    visual: ["workers", "in flight", "full"]
-  },
-  queueCapacity: {
-    title: "Queue capacity",
-    body: "Maximum accepted requests that can wait for service. If the queue is full, new accepted requests are counted as 429.",
-    visual: ["service full", "queue slots", "429"]
-  },
-  maxQueueWaitMs: {
-    title: "Max queue wait",
-    body: "Maximum time a request can sit in the queue. If it waits longer than this, it times out and becomes a 429.",
-    visual: ["queued", "wait limit", "timeout"]
-  },
-  limiterType: {
-    title: "Window algorithm",
-    body: "This is the counter type applied to every cascaded window row. Fixed resets at boundaries. Sliding counts the last N seconds.",
-    visual: ["fixed reset", "or", "rolling"]
-  },
-  latencyDist: {
-    title: "Service distribution",
-    body: "Shape used to sample backend service latency. The chart below previews the shape before you run the simulation.",
-    visual: ["shape", "sample", "latency"]
-  },
-  rlLatencyDist: {
-    title: "Decision distribution",
-    body: "Shape used to sample rate-limiter decision latency. This models time spent deciding allow or reject.",
-    visual: ["decide", "delay", "impact"]
-  },
-  winSec: {
-    title: "Window length",
-    body: "How many seconds this limiter rule watches. Example: 10 seconds with limit 500 means up to 500 requests in that 10s window.",
-    visual: ["1s", "10s", "60s"]
-  },
-  winLimit: {
-    title: "Request limit",
-    body: "Maximum requests allowed inside this row's window. A request must pass every cascaded row to be accepted.",
-    visual: ["limit", "pass all", "or 429"]
-  }
-};
-
-function fieldKeyForHelp(control) {
-  if (control.id) return control.id;
-  if (control.classList.contains("win-sec")) return "winSec";
-  if (control.classList.contains("win-limit")) return "winLimit";
-  return "";
-}
-
-function parameterHelp(control) {
-  const id = control.id;
-  if (!["latA", "latB", "rlLatA", "rlLatB"].includes(id)) return null;
-  const isLimiter = id.startsWith("rl");
-  const dist = document.getElementById(isLimiter ? "rlLatencyDist" : "latencyDist").value;
-  const copy = distributionFieldCopy(dist, isLimiter ? "Decision" : "");
-  const isA = id.endsWith("A");
-  const title = isA ? copy.aLabel : copy.bLabel;
-  const body = isA
-    ? `This is the first value used by the selected ${dist} distribution: ${copy.aHelp}.`
-    : `This is the second value used by the selected ${dist} distribution: ${copy.bHelp}.`;
-  return { title, body, visual: ["distribution", isA ? "A" : "B", "shape"] };
-}
-
-function helpForControl(control) {
-  return parameterHelp(control) || HELP_COPY[fieldKeyForHelp(control)];
-}
-
-function helpPopover() {
-  let popover = document.getElementById("helpPopover");
-  if (!popover) {
-    popover = document.createElement("div");
-    popover.id = "helpPopover";
-    popover.className = "help-popover";
-    popover.hidden = true;
-    document.body.appendChild(popover);
-  }
-  return popover;
-}
-
-function renderHelpPopover(trigger, control) {
-  const help = helpForControl(control);
-  if (!help) return;
-  const popover = helpPopover();
-  popover.innerHTML = `
-    <strong>${help.title}</strong>
-    <p>${help.body}</p>
-    <div class="help-visual">${help.visual.map((item) => `<span>${item}</span>`).join("")}</div>
-  `;
-  popover.hidden = false;
-
-  const rect = trigger.getBoundingClientRect();
-  const popoverRect = popover.getBoundingClientRect();
-  const left = Math.min(window.innerWidth - popoverRect.width - 12, rect.left);
-  const top = Math.min(window.innerHeight - popoverRect.height - 12, rect.bottom + 8);
-  popover.style.left = `${Math.max(12, left)}px`;
-  popover.style.top = `${Math.max(12, top)}px`;
-}
-
-function hideHelpPopover() {
-  const popover = document.getElementById("helpPopover");
-  if (popover) popover.hidden = true;
-}
-
-function enhanceHelpButtons(root = document) {
-  root.querySelectorAll("label").forEach((label) => {
-    if (label.querySelector(".help-trigger")) return;
-    const control = label.querySelector("input, select");
-    const title = label.querySelector("span:first-child");
-    if (!control || !title || !helpForControl(control)) return;
-
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "help-trigger";
-    button.setAttribute("aria-label", `Explain ${title.textContent}`);
-    button.textContent = "?";
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
-      renderHelpPopover(button, control);
-    });
-    label.appendChild(button);
-  });
-}
-
 function updateDistributionFieldLabels() {
   const latencyCopy = distributionFieldCopy(document.getElementById("latencyDist").value);
   setText("latALabel", latencyCopy.aLabel);
@@ -764,9 +641,7 @@ function updateLimiterAlgorithmCopy() {
     ? "Every cascaded row below uses sliding rolling windows: each counter covers the last N seconds."
     : "Every cascaded row below uses fixed window counters: each counter resets at the window boundary.";
   setText("limiterAlgorithmNote", text);
-  document.querySelectorAll(".window-algorithm").forEach((el) => {
-    el.textContent = type === "sliding" ? "Sliding rolling window" : "Fixed window counter";
-  });
+  updateWindowRowSummaries();
 }
 
 function drawDistributionPreview(canvasId, labelId, dist, a, b, color) {
@@ -784,32 +659,20 @@ function drawDistributionPreview(canvasId, labelId, dist, a, b, color) {
   const barW = (w - 2 * pad) / values.length;
 
   ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, w, h);
-
-  ctx.strokeStyle = "#e4eaf0";
-  ctx.lineWidth = 1;
-  for (let i = 0; i < 4; i += 1) {
-    const y = pad + (i * (h - 2 * pad)) / 3;
-    ctx.beginPath();
-    ctx.moveTo(pad, y);
-    ctx.lineTo(w - pad, y);
-    ctx.stroke();
-  }
 
   const fill = ctx.createLinearGradient(0, pad, 0, h - pad);
   fill.addColorStop(0, color);
-  fill.addColorStop(1, colorToRgba(color, 0.18));
+  fill.addColorStop(1, colorToRgba(color, 0.08));
   ctx.fillStyle = fill;
 
   values.forEach((value, i) => {
     const bh = Math.max(2, value * (h - 2 * pad));
     const x = pad + i * barW + 1;
     const y = h - pad - bh;
-    ctx.fillRect(x, y, Math.max(1, barW - 2), bh);
+    ctx.fillRect(x, y, Math.max(1, barW - 1), bh);
   });
 
-  ctx.strokeStyle = "#b8c4cf";
+  ctx.strokeStyle = "#bdc1c6";
   ctx.beginPath();
   ctx.moveTo(pad, h - pad);
   ctx.lineTo(w - pad, h - pad);
@@ -826,7 +689,7 @@ function updateDistributionPreviews() {
     document.getElementById("latencyDist").value,
     getNum("latA"),
     getNum("latB"),
-    "#1d5f99"
+    "#5f6368"
   );
   drawDistributionPreview(
     "rlLatencyPreview",
@@ -834,13 +697,13 @@ function updateDistributionPreviews() {
     document.getElementById("rlLatencyDist").value,
     getNum("rlLatA"),
     getNum("rlLatB"),
-    "#147a55"
+    "#5f6368"
   );
 }
 
 const COOKIE_NAME = "rl_sim_state";
 const COOKIE_TTL_SEC = 60 * 60 * 24 * 180;
-const UI_STATE_VERSION = 3;
+const UI_STATE_VERSION = 7;
 const CONTROL_IDS = [
   "durationSec",
   "stepMs",
@@ -904,28 +767,27 @@ function saveStateToCookie() {
 
 function applyStateToUi(saved) {
   if (!saved) return;
+  if (saved.version !== UI_STATE_VERSION) return;
 
   if (saved.controls) {
     for (const id of CONTROL_IDS) {
       const el = document.getElementById(id);
       if (el && saved.controls[id] !== undefined) {
-        if (id === "latencyDist" && saved.version !== UI_STATE_VERSION && saved.controls[id] === "constant") {
-          continue;
-        }
         el.value = String(saved.controls[id]);
       }
     }
   }
 
-  if (saved.windows && Array.isArray(saved.windows) && saved.windows.length > 0) {
+  if (Array.isArray(saved.windows)) {
     const rows = document.getElementById("windowRows");
     rows.innerHTML = "";
     for (const w of saved.windows) {
       addWindowRow(w.windowMs, w.limit);
     }
+    updateWindowRowSummaries();
   }
 
-  if (saved.version === UI_STATE_VERSION && saved.visibility && typeof saved.visibility === "object") {
+  if (saved.visibility && typeof saved.visibility === "object") {
     for (const [key, val] of Object.entries(saved.visibility)) {
       seriesVisibility.set(key, Boolean(val));
     }
@@ -933,7 +795,8 @@ function applyStateToUi(saved) {
 }
 
 const seriesVisibility = new Map();
-const DEFAULT_VISIBLE_SERIES = new Set(["active", "queue", "accepted", "r429"]);
+const REQUIRED_SERIES = new Set(["arrivals"]);
+const DEFAULT_VISIBLE_SERIES = new Set(["arrivals", "accepted", "r429", "queue", "active"]);
 const mergedChartState = {
   fullSeries: [],
   fullTimeline: [],
@@ -970,18 +833,18 @@ function setMergedChartDisplay(series, timeline, hoverIndex = null) {
 }
 
 function colorForWindowSeries(i) {
-  const colors = ["#7b8794", "#9aa5b1", "#52606d", "#b8c4cf"];
+  const colors = ["#7b858f", "#9aa2aa", "#626d77", "#b6bec6"];
   return colors[i % colors.length];
 }
 
 function buildMergedSeries(result) {
   const base = [
-    { key: "accepted", label: "Accepted/s", color: "#147a55", values: result.timeline.map((p) => p.acceptedPerSec) },
-    { key: "r429", label: "429/s", color: "#b42318", values: result.timeline.map((p) => p.r429PerSec) },
-    { key: "queue", label: "Queue", color: "#8a5b12", values: result.timeline.map((p) => p.queued) },
-    { key: "active", label: "Active", color: "#1d5f99", values: result.timeline.map((p) => p.active) },
-    { key: "arrivals", label: "Arrivals/s", color: "#5f6b76", values: result.timeline.map((p) => p.arrivalsPerSec) },
-    { key: "rlPending", label: "Limiter Pending", color: "#167481", values: result.timeline.map((p) => p.limiterPending) }
+    { key: "accepted", label: "Accepted/s", color: "#188038", values: result.timeline.map((p) => p.acceptedPerSec), emphasis: true, fill: true },
+    { key: "r429", label: "429/s", color: "#d93025", values: result.timeline.map((p) => p.r429PerSec), emphasis: true, fill: true },
+    { key: "queue", label: "Queue", color: "#b06000", values: result.timeline.map((p) => p.queued) },
+    { key: "active", label: "Active", color: "#1a73e8", values: result.timeline.map((p) => p.active) },
+    { key: "arrivals", label: "Arrivals/s", color: "#3c4043", values: result.timeline.map((p) => p.arrivalsPerSec), required: true, emphasis: true },
+    { key: "rlPending", label: "Limiter Pending", color: "#59636e", values: result.timeline.map((p) => p.limiterPending) }
   ];
   const windows = result.windowSeries.map((w, i) => ({
     key: `window_${i}`,
@@ -998,16 +861,19 @@ function renderSeriesToggles(series) {
 
   for (const s of series) {
     if (!seriesVisibility.has(s.key)) seriesVisibility.set(s.key, DEFAULT_VISIBLE_SERIES.has(s.key));
+    if (s.required || REQUIRED_SERIES.has(s.key)) seriesVisibility.set(s.key, true);
     const id = `toggle_${s.key}`;
     const wrapper = document.createElement("label");
+    if (s.required || REQUIRED_SERIES.has(s.key)) wrapper.classList.add("is-required");
     wrapper.innerHTML = `
-      <input id="${id}" type="checkbox" ${seriesVisibility.get(s.key) ? "checked" : ""} />
+      <input id="${id}" type="checkbox" ${seriesVisibility.get(s.key) ? "checked" : ""} ${(s.required || REQUIRED_SERIES.has(s.key)) ? "disabled" : ""} />
       <span>${s.label}</span>
     `;
     wrapper.style.setProperty("--legend-color", s.color);
     wrapper.querySelector("input").addEventListener("change", (e) => {
+      if (s.required || REQUIRED_SERIES.has(s.key)) return;
       seriesVisibility.set(s.key, e.target.checked);
-      const visible = series.filter((x) => seriesVisibility.get(x.key));
+      const visible = series.filter((x) => x.required || REQUIRED_SERIES.has(x.key) || seriesVisibility.get(x.key));
       setMergedChartDisplay(
         visible.length ? visible : [series[0]],
         mergedChartState.fullTimeline,
@@ -1073,13 +939,9 @@ function setChecklistItem(id, state, text) {
 }
 
 function markConfigChanged() {
-  setChecklistItem("checkInputs", "dirty", "Inputs changed");
-  setChecklistItem("checkResults", "dirty", "Results need update");
 }
 
 function markResultsCurrent() {
-  setChecklistItem("checkInputs", "ok", "Inputs captured");
-  setChecklistItem("checkResults", "ok", "Results current");
 }
 
 function scrollToResults() {
@@ -1089,40 +951,108 @@ function scrollToResults() {
   });
 }
 
+function createNumberField({ label, className, min, step, value, unit }) {
+  const wrapper = document.createElement("label");
+  const labelText = document.createElement("span");
+  const input = document.createElement("input");
+  const unitText = document.createElement("span");
+
+  labelText.textContent = label;
+  input.type = "number";
+  input.className = className;
+  input.min = min;
+  input.step = step;
+  input.value = value;
+  unitText.className = "field-unit";
+  unitText.textContent = unit;
+
+  wrapper.append(labelText, input, unitText);
+  return { wrapper, input };
+}
+
+function formatWindowSeconds(windowMs) {
+  const seconds = windowMs / 1000;
+  return Number.isInteger(seconds) ? String(seconds) : seconds.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function updateWindowRowSummaries() {
+  const rows = document.querySelectorAll(".window-row");
+  const empty = document.getElementById("windowEmpty");
+  if (empty) empty.hidden = rows.length > 0;
+
+  rows.forEach((row, idx) => {
+    const seconds = Number(row.querySelector(".win-sec").value);
+    const limit = Number(row.querySelector(".win-limit").value);
+    const algorithm = document.getElementById("limiterType").value === "sliding"
+      ? "Sliding window"
+      : "Fixed window";
+    row.querySelector(".window-rule-title").textContent = `Rule ${idx + 1}`;
+    row.querySelector(".window-rule-summary").textContent = `Allow up to ${formatNum(limit)} requests every ${formatWindowSeconds(seconds * 1000)}s`;
+    row.querySelector(".window-algorithm").textContent = algorithm;
+  });
+}
+
 function addWindowRow(windowMs, limit) {
   const row = document.createElement("div");
   row.className = "window-row";
   const windowSec = windowMs / 1000;
-  row.innerHTML = `
-    <div class="window-algorithm"></div>
-    <label><span>Window length</span>
-      <input type="number" class="win-sec" min="0.001" step="0.5" value="${windowSec}" />
-      <span class="field-unit">seconds</span>
-    </label>
-    <label><span>Request limit</span>
-      <input type="number" class="win-limit" min="1" step="1" value="${limit}" />
-      <span class="field-unit">requests per window</span>
-    </label>
-    <button type="button" class="remove-window">Remove</button>
-  `;
-  row.querySelector(".window-algorithm").textContent = document.getElementById("limiterType").value === "sliding"
-    ? "Sliding rolling window"
-    : "Fixed window counter";
-  row.querySelector(".remove-window").addEventListener("click", () => {
+
+  const header = document.createElement("div");
+  header.className = "window-rule-header";
+
+  const titleGroup = document.createElement("div");
+  const title = document.createElement("strong");
+  const summary = document.createElement("span");
+  title.className = "window-rule-title";
+  summary.className = "window-rule-summary";
+  titleGroup.append(title, summary);
+
+  const algorithm = document.createElement("span");
+  algorithm.className = "window-algorithm";
+
+  const removeButton = document.createElement("button");
+  removeButton.type = "button";
+  removeButton.className = "remove-window";
+  removeButton.textContent = "Remove";
+
+  header.append(titleGroup, algorithm);
+
+  const windowField = createNumberField({
+    label: "Window",
+    className: "win-sec",
+    min: "0.001",
+    step: "0.5",
+    value: windowSec,
+    unit: "seconds"
+  });
+  const limitField = createNumberField({
+    label: "Limit",
+    className: "win-limit",
+    min: "1",
+    step: "1",
+    value: limit,
+    unit: "requests"
+  });
+
+  row.append(header, windowField.wrapper, limitField.wrapper, removeButton);
+
+  removeButton.addEventListener("click", () => {
     row.remove();
+    updateWindowRowSummaries();
     saveStateToCookie();
     markConfigChanged();
   });
-  row.querySelector(".win-sec").addEventListener("input", () => {
+
+  const handleInput = () => {
+    updateWindowRowSummaries();
     saveStateToCookie();
     markConfigChanged();
-  });
-  row.querySelector(".win-limit").addEventListener("input", () => {
-    saveStateToCookie();
-    markConfigChanged();
-  });
+  };
+  windowField.input.addEventListener("input", handleInput);
+  limitField.input.addEventListener("input", handleInput);
+
   document.getElementById("windowRows").appendChild(row);
-  enhanceHelpButtons(row);
+  updateWindowRowSummaries();
 }
 
 function readWindows() {
@@ -1132,7 +1062,7 @@ function readWindows() {
     limit: clamp(Number(row.querySelector(".win-limit").value), 1, 10000000)
   }));
   const valid = windows.filter((w) => Number.isFinite(w.windowMs) && Number.isFinite(w.limit) && w.windowMs > 0 && w.limit > 0);
-  return valid.length ? valid : [{ windowMs: 1000, limit: 50 }];
+  return valid;
 }
 
 function readConfig() {
@@ -1164,7 +1094,7 @@ function runAndRender(options = {}) {
 
   const merged = buildMergedSeries(result);
   renderSeriesToggles(merged);
-  const visible = merged.filter((s) => seriesVisibility.get(s.key));
+  const visible = merged.filter((s) => s.required || REQUIRED_SERIES.has(s.key) || seriesVisibility.get(s.key));
   mergedChartState.fullSeries = merged;
   mergedChartState.fullTimeline = result.timeline;
   setMergedChartDisplay(visible.length ? visible : [merged[0]], result.timeline);
@@ -1178,13 +1108,8 @@ function boot() {
   const mergedChart = document.getElementById("mergedChart");
   mergedChart.addEventListener("mousemove", renderMergedChartTooltip);
   mergedChart.addEventListener("mouseleave", hideMergedChartTooltip);
-  document.addEventListener("click", hideHelpPopover);
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") hideHelpPopover();
-  });
-
   document.getElementById("addWindowBtn").addEventListener("click", () => {
-    addWindowRow(1000, 60);
+    addWindowRow(1000, 85);
     saveStateToCookie();
     markConfigChanged();
   });
@@ -1203,12 +1128,9 @@ function boot() {
     });
   }
 
-  addWindowRow(1000, 60);
-  addWindowRow(10000, 500);
-  addWindowRow(60000, 2000);
+  addWindowRow(1000, 85);
   applyStateToUi(loadStateFromCookie());
   runAndRender();
-  enhanceHelpButtons();
 }
 
 boot();
