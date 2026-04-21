@@ -5,48 +5,43 @@ function clamp(n, min, max) {
 function normal(mean, std) {
   const u1 = Math.random() || 1e-7;
   const u2 = Math.random() || 1e-7;
-  const z = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
-  return mean + z * std;
+  return mean + Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2) * std;
 }
 
 function poisson(lambda) {
   if (lambda <= 0) return 0;
-  if (lambda > 50) {
-    return Math.max(0, Math.round(normal(lambda, Math.sqrt(lambda))));
-  }
+  if (lambda > 50) return Math.max(0, Math.round(normal(lambda, Math.sqrt(lambda))));
   const l = Math.exp(-lambda);
-  let p = 1;
   let k = 0;
-  do {
-    k += 1;
-    p *= Math.random();
-  } while (p > l);
+  let p = 1;
+  do { k += 1; p *= Math.random(); } while (p > l);
   return k - 1;
 }
 
-function sampleLatencyMs(dist, a, b) {
-  if (dist === "constant") return Math.max(1, a);
-  if (dist === "uniform") {
+const LATENCY_SAMPLERS = {
+  constant: (a) => Math.max(1, a),
+  uniform: (a, b) => {
     const lo = Math.min(a, b);
     const hi = Math.max(a, b);
     return Math.max(1, lo + Math.random() * (hi - lo));
-  }
-  if (dist === "normal") return Math.max(1, normal(a, Math.max(1, b)));
-  if (dist === "lognormal") {
-    const x = normal(a, Math.max(0.01, b));
-    return Math.max(1, Math.exp(x));
-  }
-  if (dist === "exponential") {
-    const mean = Math.max(1, a);
-    return Math.max(1, -Math.log(1 - Math.random()) * mean);
-  }
-  return Math.max(1, a);
+  },
+  normal: (a, b) => Math.max(1, normal(a, Math.max(1, b))),
+  lognormal: (a, b) => Math.max(1, Math.exp(normal(a, Math.max(0.01, b)))),
+  exponential: (a) => Math.max(1, -Math.log(1 - Math.random()) * Math.max(1, a))
+};
+
+function sampleLatencyMs(dist, a, b) {
+  return (LATENCY_SAMPLERS[dist] || LATENCY_SAMPLERS.constant)(a, b);
 }
 
 function percentile(sorted, p) {
   if (!sorted.length) return 0;
-  const idx = Math.ceil((p / 100) * sorted.length) - 1;
-  return sorted[clamp(idx, 0, sorted.length - 1)];
+  const idx = clamp(Math.ceil((p / 100) * sorted.length) - 1, 0, sorted.length - 1);
+  return sorted[idx];
+}
+
+function mean(values) {
+  return values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
 }
 
 function trafficWaveMultiplier(step, steps, burstiness) {
@@ -65,68 +60,49 @@ class FixedWindowLimiter {
     this.windowStart = 0;
     this.count = 0;
   }
-
   refresh(tMs) {
     if (tMs >= this.windowStart + this.windowMs) {
       this.windowStart = Math.floor(tMs / this.windowMs) * this.windowMs;
       this.count = 0;
     }
   }
-
-  canAllow(tMs) {
-    this.refresh(tMs);
-    return this.count < this.limit;
-  }
-
-  commit(tMs) {
-    this.refresh(tMs);
-    this.count += 1;
-  }
-
-  countAt(tMs) {
-    this.refresh(tMs);
-    return this.count;
-  }
+  canAllow(tMs) { this.refresh(tMs); return this.count < this.limit; }
+  commit(tMs) { this.refresh(tMs); this.count += 1; }
+  countAt(tMs) { this.refresh(tMs); return this.count; }
 }
 
+// Sliding window keeps events sorted ascending by timestamp so evict is a
+// monotonic prefix scan. Commits use binary insertion so the invariant
+// survives any out-of-order arrivals from the caller.
 class SlidingWindowLimiter {
   constructor(limit, windowMs) {
     this.limit = limit;
     this.windowMs = windowMs;
     this.events = [];
-    this.head = 0;
   }
-
   evict(tMs) {
     const floor = tMs - this.windowMs;
-    while (this.head < this.events.length && this.events[this.head] <= floor) {
-      this.head += 1;
-    }
-    if (this.head > 2000 && this.head * 2 > this.events.length) {
-      this.events = this.events.slice(this.head);
-      this.head = 0;
-    }
+    let drop = 0;
+    while (drop < this.events.length && this.events[drop] <= floor) drop += 1;
+    if (drop) this.events.splice(0, drop);
   }
-
-  canAllow(tMs) {
-    this.evict(tMs);
-    return this.events.length - this.head < this.limit;
-  }
-
+  canAllow(tMs) { this.evict(tMs); return this.events.length < this.limit; }
   commit(tMs) {
-    this.evict(tMs);
-    this.events.push(tMs);
+    let lo = 0;
+    let hi = this.events.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (this.events[mid] <= tMs) lo = mid + 1; else hi = mid;
+    }
+    this.events.splice(lo, 0, tMs);
   }
-
-  countAt(tMs) {
-    this.evict(tMs);
-    return this.events.length - this.head;
-  }
+  countAt(tMs) { this.evict(tMs); return this.events.length; }
 }
 
 function createLimiter(type, limit, windowMs) {
-  if (type === "sliding") return new SlidingWindowLimiter(limit, windowMs);
-  return new FixedWindowLimiter(limit, windowMs);
+  return type === "sliding"
+    ? new SlidingWindowLimiter(limit, windowMs)
+    : new FixedWindowLimiter(limit, windowMs);
 }
 
 function makeWindowSeries(windows) {
@@ -142,112 +118,87 @@ function makeWindowSeries(windows) {
 
 function runSimulation(cfg) {
   const {
-    durationSec,
-    stepMs,
-    rps,
-    burstiness,
-    trafficNoise = false,
-    maxConcurrent,
-    queueCapacity,
-    maxQueueWaitMs,
-    limiterType,
-    windows,
-    rlLatencyDist,
-    rlLatA,
-    rlLatB,
-    latencyDist,
-    latA,
-    latB,
-    depMaxConcurrent,
-    depQueueCapacity,
-    depMaxQueueWaitMs,
-    depLatencyDist,
-    depLatA,
-    depLatB
+    durationSec, stepMs, rps, burstiness, trafficNoise = false,
+    maxConcurrent, queueCapacity, maxQueueWaitMs,
+    limiterType, windows,
+    rlLatencyDist, rlLatA, rlLatB,
+    latencyDist, latA, latB,
+    depMaxConcurrent, depQueueCapacity, depMaxQueueWaitMs,
+    depLatencyDist, depLatA, depLatB
   } = cfg;
 
   const limiters = windows.map((w) => createLimiter(limiterType, w.limit, w.windowMs));
   const windowSeries = makeWindowSeries(windows);
-
   const steps = Math.floor((durationSec * 1000) / stepMs);
+
   const appInflight = [];
   const appQueue = [];
   const depInflight = [];
   const depQueue = [];
   const limiterPending = [];
-  const latencies = [];
-  const latencyByStatus = { s200: [], s429: [], s503: [] };
   const limiterLatencies = [];
-
+  const latencyByStatus = { s200: [], s429: [], s503: [] };
   const timeline = [];
-  let totalArrived = 0;
-  let totalServed = 0;
-  let totalDelayedServed = 0;
-  let total429 = 0;
-  let total503 = 0;
-  let totalDroppedFull = 0;
-  let totalDroppedWait = 0;
-  let totalDepDroppedFull = 0;
-  let totalDepDroppedWait = 0;
-  let totalEnteredApp = 0;
-  let totalEnteredDependency = 0;
+
+  const totals = {
+    arrived: 0, enteredApp: 0, enteredDependency: 0, served: 0, delayedServed: 0,
+    rate429: 0, rate503: 0,
+    appDroppedFull: 0, appDroppedWait: 0,
+    depDroppedFull: 0, depDroppedWait: 0
+  };
+  const peaks = { limiterPending: 0, appQueue: 0, depQueue: 0, appInflight: 0, depInflight: 0 };
+
   let sumLatency = 0;
   let sumQueueDelay = 0;
-  let peakLimiterPending = 0;
   let trafficArrivalAccumulator = 0;
-  let peakAppQueue = 0;
-  let peakDepQueue = 0;
-  let peakAppInflight = 0;
-  let peakDepInflight = 0;
 
-  function startDependency(now, req) {
-    if (depInflight.length < depMaxConcurrent) {
-      const depServiceMs = sampleLatencyMs(depLatencyDist, depLatA, depLatB);
-      depInflight.push({
-        endMs: now + depServiceMs,
-        depServiceMs,
-        appServiceMs: req.appServiceMs,
-        appQueueDelayMs: req.appQueueDelayMs,
-        depQueueDelayMs: now - req.depArrivalMs
+  // Admit to app. `now` is decisionTime — the moment the request leaves the
+  // limiter and either starts processing or joins the app queue.
+  function admitApp(now, req) {
+    if (appInflight.length < maxConcurrent) {
+      const serviceMs = sampleLatencyMs(latencyDist, latA, latB);
+      appInflight.push({
+        endMs: now + serviceMs,
+        appServiceMs: serviceMs,
+        limiterWaitMs: req.limiterWaitMs,
+        appQueueWaitMs: 0
       });
-      totalEnteredDependency += 1;
+      totals.enteredApp += 1;
       return true;
     }
-
-    if (depQueue.length < depQueueCapacity) {
-      depQueue.push(req);
-      totalEnteredDependency += 1;
+    if (appQueue.length < queueCapacity) {
+      appQueue.push({ ...req, queuedAtMs: now });
+      totals.enteredApp += 1;
       return true;
     }
-
-    total503 += 1;
-    totalDroppedFull += 1;
-    totalDepDroppedFull += 1;
-    latencyByStatus.s503.push(req.appQueueDelayMs + req.appServiceMs);
+    totals.rate503 += 1;
+    totals.appDroppedFull += 1;
+    latencyByStatus.s503.push(req.limiterWaitMs);
     return false;
   }
 
-  function startApp(now, req) {
-    if (appInflight.length < maxConcurrent) {
-      const appServiceMs = sampleLatencyMs(latencyDist, latA, latB);
-      appInflight.push({
-        endMs: now + appServiceMs,
-        appServiceMs,
-        appQueueDelayMs: now - req.arrivalMs
+  function admitDependency(now, req) {
+    if (depInflight.length < depMaxConcurrent) {
+      const serviceMs = sampleLatencyMs(depLatencyDist, depLatA, depLatB);
+      depInflight.push({
+        endMs: now + serviceMs,
+        depServiceMs: serviceMs,
+        limiterWaitMs: req.limiterWaitMs,
+        appQueueWaitMs: req.appQueueWaitMs,
+        appServiceMs: req.appServiceMs,
+        depQueueWaitMs: 0
       });
-      totalEnteredApp += 1;
+      totals.enteredDependency += 1;
       return true;
     }
-
-    if (appQueue.length < queueCapacity) {
-      appQueue.push(req);
-      totalEnteredApp += 1;
+    if (depQueue.length < depQueueCapacity) {
+      depQueue.push({ ...req, queuedAtMs: now });
+      totals.enteredDependency += 1;
       return true;
     }
-
-    total503 += 1;
-    totalDroppedFull += 1;
-    latencyByStatus.s503.push(now - req.arrivalMs);
+    totals.rate503 += 1;
+    totals.depDroppedFull += 1;
+    latencyByStatus.s503.push(req.limiterWaitMs + req.appQueueWaitMs + req.appServiceMs);
     return false;
   }
 
@@ -258,137 +209,129 @@ function runSimulation(cfg) {
     let step503 = 0;
     let stepAccepted = 0;
 
+    // 1. Complete dependency inflight → served
     for (let i = depInflight.length - 1; i >= 0; i -= 1) {
-      if (depInflight[i].endMs <= now) {
-        const req = depInflight[i];
-        depInflight.splice(i, 1);
-        totalServed += 1;
-        const totalQueueDelay = req.appQueueDelayMs + req.depQueueDelayMs;
-        if (totalQueueDelay > 0) totalDelayedServed += 1;
-        const totalLat = req.appServiceMs + req.depServiceMs + totalQueueDelay;
-        latencies.push(totalLat);
-        latencyByStatus.s200.push(totalLat);
-        sumLatency += totalLat;
-        sumQueueDelay += totalQueueDelay;
-      }
+      if (depInflight[i].endMs > now) continue;
+      const r = depInflight[i];
+      depInflight.splice(i, 1);
+      totals.served += 1;
+      const queueDelay = r.appQueueWaitMs + r.depQueueWaitMs;
+      if (queueDelay > 0) totals.delayedServed += 1;
+      const totalLat = r.limiterWaitMs + queueDelay + r.appServiceMs + r.depServiceMs;
+      latencyByStatus.s200.push(totalLat);
+      sumLatency += totalLat;
+      sumQueueDelay += queueDelay;
     }
 
+    // 2. Expire dep queue timeouts
     for (let i = depQueue.length - 1; i >= 0; i -= 1) {
-      if (now - depQueue[i].depArrivalMs >= depMaxQueueWaitMs) {
-        const req = depQueue[i];
-        depQueue.splice(i, 1);
-        total503 += 1;
-        totalDroppedWait += 1;
-        totalDepDroppedWait += 1;
-        latencyByStatus.s503.push((now - req.depArrivalMs) + req.appQueueDelayMs + req.appServiceMs);
-        step503 += 1;
-      }
+      const r = depQueue[i];
+      if (now - r.queuedAtMs < depMaxQueueWaitMs) continue;
+      depQueue.splice(i, 1);
+      totals.rate503 += 1;
+      totals.depDroppedWait += 1;
+      step503 += 1;
+      latencyByStatus.s503.push(r.limiterWaitMs + r.appQueueWaitMs + r.appServiceMs + (now - r.queuedAtMs));
     }
 
-    while (depQueue.length > 0 && depInflight.length < depMaxConcurrent) {
-      const req = depQueue.shift();
-      const depServiceMs = sampleLatencyMs(depLatencyDist, depLatA, depLatB);
+    // 3. Promote dep queue → dep inflight
+    while (depQueue.length && depInflight.length < depMaxConcurrent) {
+      const r = depQueue.shift();
+      const serviceMs = sampleLatencyMs(depLatencyDist, depLatA, depLatB);
       depInflight.push({
-        endMs: now + depServiceMs,
-        depServiceMs,
-        appServiceMs: req.appServiceMs,
-        appQueueDelayMs: req.appQueueDelayMs,
-        depQueueDelayMs: now - req.depArrivalMs
+        endMs: now + serviceMs,
+        depServiceMs: serviceMs,
+        limiterWaitMs: r.limiterWaitMs,
+        appQueueWaitMs: r.appQueueWaitMs,
+        appServiceMs: r.appServiceMs,
+        depQueueWaitMs: now - r.queuedAtMs
       });
     }
 
+    // 4. Complete app inflight → try dependency admission
     for (let i = appInflight.length - 1; i >= 0; i -= 1) {
-      if (appInflight[i].endMs <= now) {
-        const req = appInflight[i];
-        appInflight.splice(i, 1);
-        const entered = startDependency(now, {
-          depArrivalMs: now,
-          appServiceMs: req.appServiceMs,
-          appQueueDelayMs: req.appQueueDelayMs
-        });
-        if (!entered) step503 += 1;
-      }
-    }
-
-    for (let i = appQueue.length - 1; i >= 0; i -= 1) {
-      if (now - appQueue[i].arrivalMs >= maxQueueWaitMs) {
-        const req = appQueue[i];
-        appQueue.splice(i, 1);
-        total503 += 1;
-        totalDroppedWait += 1;
-        latencyByStatus.s503.push(now - req.arrivalMs);
-        step503 += 1;
-      }
-    }
-
-    while (appQueue.length > 0 && appInflight.length < maxConcurrent) {
-      const req = appQueue.shift();
-      const appServiceMs = sampleLatencyMs(latencyDist, latA, latB);
-      appInflight.push({
-        endMs: now + appServiceMs,
-        appServiceMs,
-        appQueueDelayMs: now - req.arrivalMs
+      if (appInflight[i].endMs > now) continue;
+      const r = appInflight[i];
+      appInflight.splice(i, 1);
+      const entered = admitDependency(now, {
+        limiterWaitMs: r.limiterWaitMs,
+        appQueueWaitMs: r.appQueueWaitMs,
+        appServiceMs: r.appServiceMs
       });
-    }
-
-    const expectedRps = expectedTrafficRpsAt(step, steps, rps, burstiness);
-    const expectedInStep = (expectedRps * stepMs) / 1000;
-    let arrivals = 0;
-    if (trafficNoise) {
-      arrivals = poisson(Math.max(0, expectedInStep));
-    } else {
-      trafficArrivalAccumulator += Math.max(0, expectedInStep);
-      arrivals = Math.floor(trafficArrivalAccumulator);
-      trafficArrivalAccumulator -= arrivals;
-    }
-
-    for (let i = 0; i < arrivals; i += 1) {
-      const decisionLatencyMs = sampleLatencyMs(rlLatencyDist, rlLatA, rlLatB);
-      limiterPending.push({
-        decisionReadyMs: now + decisionLatencyMs,
-        decisionLatencyMs,
-        arrivalMs: now
-      });
-      limiterLatencies.push(decisionLatencyMs);
-    }
-    totalArrived += arrivals;
-
-    for (let i = limiterPending.length - 1; i >= 0; i -= 1) {
-      if (limiterPending[i].decisionReadyMs > bucketEnd) continue;
-      const pendingReq = limiterPending[i];
-      limiterPending.splice(i, 1);
-      const decisionTime = pendingReq.decisionReadyMs;
-
-      let blockedIdx = -1;
-      for (let j = 0; j < limiters.length; j += 1) {
-        if (!limiters[j].canAllow(decisionTime)) {
-          blockedIdx = j;
-          break;
-        }
-      }
-
-      if (blockedIdx >= 0) {
-        total429 += 1;
-        step429 += 1;
-        latencyByStatus.s429.push(decisionTime - pendingReq.arrivalMs);
-        windowSeries[blockedIdx].blocked += 1;
-        continue;
-      }
-
-      for (let j = 0; j < limiters.length; j += 1) {
-        limiters[j].commit(decisionTime);
-      }
-      stepAccepted += 1;
-
-      const entered = startApp(decisionTime, { arrivalMs: pendingReq.arrivalMs });
       if (!entered) step503 += 1;
     }
 
-    peakLimiterPending = Math.max(peakLimiterPending, limiterPending.length);
-    peakAppQueue = Math.max(peakAppQueue, appQueue.length);
-    peakDepQueue = Math.max(peakDepQueue, depQueue.length);
-    peakAppInflight = Math.max(peakAppInflight, appInflight.length);
-    peakDepInflight = Math.max(peakDepInflight, depInflight.length);
+    // 5. Expire app queue timeouts (measured from queue entry, not arrival)
+    for (let i = appQueue.length - 1; i >= 0; i -= 1) {
+      const r = appQueue[i];
+      if (now - r.queuedAtMs < maxQueueWaitMs) continue;
+      appQueue.splice(i, 1);
+      totals.rate503 += 1;
+      totals.appDroppedWait += 1;
+      step503 += 1;
+      latencyByStatus.s503.push(r.limiterWaitMs + (now - r.queuedAtMs));
+    }
+
+    // 6. Promote app queue → app inflight
+    while (appQueue.length && appInflight.length < maxConcurrent) {
+      const r = appQueue.shift();
+      const serviceMs = sampleLatencyMs(latencyDist, latA, latB);
+      appInflight.push({
+        endMs: now + serviceMs,
+        appServiceMs: serviceMs,
+        limiterWaitMs: r.limiterWaitMs,
+        appQueueWaitMs: now - r.queuedAtMs
+      });
+    }
+
+    // 7. Generate arrivals and enqueue limiter decisions
+    const expectedRps = expectedTrafficRpsAt(step, steps, rps, burstiness);
+    const expectedInStep = Math.max(0, (expectedRps * stepMs) / 1000);
+    let arrivals;
+    if (trafficNoise) {
+      arrivals = poisson(expectedInStep);
+    } else {
+      trafficArrivalAccumulator += expectedInStep;
+      arrivals = Math.floor(trafficArrivalAccumulator);
+      trafficArrivalAccumulator -= arrivals;
+    }
+    for (let i = 0; i < arrivals; i += 1) {
+      const decisionLatencyMs = sampleLatencyMs(rlLatencyDist, rlLatA, rlLatB);
+      limiterPending.push({ decisionReadyMs: now + decisionLatencyMs, arrivalMs: now });
+      limiterLatencies.push(decisionLatencyMs);
+    }
+    totals.arrived += arrivals;
+
+    // 8. Process limiter decisions in chronological order. Sorting by
+    // decisionReadyMs is what makes the sliding window correct under
+    // jittered decision latencies.
+    limiterPending.sort((a, b) => a.decisionReadyMs - b.decisionReadyMs);
+    let readyCount = 0;
+    while (readyCount < limiterPending.length && limiterPending[readyCount].decisionReadyMs <= bucketEnd) {
+      readyCount += 1;
+    }
+    const ready = limiterPending.splice(0, readyCount);
+    for (const pending of ready) {
+      const decisionTime = pending.decisionReadyMs;
+      const blockedIdx = limiters.findIndex((lim) => !lim.canAllow(decisionTime));
+      if (blockedIdx >= 0) {
+        totals.rate429 += 1;
+        step429 += 1;
+        windowSeries[blockedIdx].blocked += 1;
+        latencyByStatus.s429.push(decisionTime - pending.arrivalMs);
+        continue;
+      }
+      for (const lim of limiters) lim.commit(decisionTime);
+      stepAccepted += 1;
+      const entered = admitApp(decisionTime, { limiterWaitMs: decisionTime - pending.arrivalMs });
+      if (!entered) step503 += 1;
+    }
+
+    peaks.limiterPending = Math.max(peaks.limiterPending, limiterPending.length);
+    peaks.appQueue = Math.max(peaks.appQueue, appQueue.length);
+    peaks.depQueue = Math.max(peaks.depQueue, depQueue.length);
+    peaks.appInflight = Math.max(peaks.appInflight, appInflight.length);
+    peaks.depInflight = Math.max(peaks.depInflight, depInflight.length);
 
     for (let i = 0; i < limiters.length; i += 1) {
       const count = limiters[i].countAt(now);
@@ -396,6 +339,7 @@ function runSimulation(cfg) {
       windowSeries[i].utilizationPct.push(clamp(pct, 0, 200));
     }
 
+    const perSec = 1000 / stepMs;
     timeline.push({
       tSec: now / 1000,
       active: appInflight.length,
@@ -404,69 +348,50 @@ function runSimulation(cfg) {
       depQueued: depQueue.length,
       limiterPending: limiterPending.length,
       expectedArrivalsPerSec: Math.round(expectedRps),
-      arrivalsPerSec: Math.round((arrivals * 1000) / stepMs),
-      acceptedPerSec: Math.round((stepAccepted * 1000) / stepMs),
-      r429PerSec: Math.round((step429 * 1000) / stepMs),
-      r503PerSec: Math.round((step503 * 1000) / stepMs)
+      arrivalsPerSec: Math.round(arrivals * perSec),
+      acceptedPerSec: Math.round(stepAccepted * perSec),
+      r429PerSec: Math.round(step429 * perSec),
+      r503PerSec: Math.round(step503 * perSec)
     });
   }
 
-  latencies.sort((a, b) => a - b);
-  latencyByStatus.s200.sort((a, b) => a - b);
+  const sortedLatencies = [...latencyByStatus.s200].sort((a, b) => a - b);
   latencyByStatus.s429.sort((a, b) => a - b);
   latencyByStatus.s503.sort((a, b) => a - b);
-  limiterLatencies.sort((a, b) => a - b);
-  const avgLatency = totalServed ? sumLatency / totalServed : 0;
-  const avgQueueDelay = totalServed ? sumQueueDelay / totalServed : 0;
-  const avgLimiterLatency = limiterLatencies.length
-    ? limiterLatencies.reduce((acc, v) => acc + v, 0) / limiterLatencies.length
-    : 0;
+  const sortedLimiterLatencies = [...limiterLatencies].sort((a, b) => a - b);
 
+  const pct = (num, den) => (den ? (100 * num) / den : 0);
   return {
     totals: {
-      arrived: totalArrived,
-      enteredApp: totalEnteredApp,
-      enteredDependency: totalEnteredDependency,
-      served: totalServed,
-      delayedServed: totalDelayedServed,
-      droppedFull: totalDroppedFull,
-      droppedWait: totalDroppedWait,
-      depDroppedFull: totalDepDroppedFull,
-      depDroppedWait: totalDepDroppedWait,
-      rate503: total503,
-      rate429: total429,
-      servedPct: totalArrived ? (100 * totalServed) / totalArrived : 0,
-      rate503Pct: totalArrived ? (100 * total503) / totalArrived : 0,
-      rate429Pct: totalArrived ? (100 * total429) / totalArrived : 0,
-      protectionPct: totalArrived ? (100 * total429) / totalArrived : 0
+      ...totals,
+      // Rolled-up aliases kept for back-compat; prefer per-stage fields above.
+      droppedFull: totals.appDroppedFull + totals.depDroppedFull,
+      droppedWait: totals.appDroppedWait + totals.depDroppedWait,
+      servedPct: pct(totals.served, totals.arrived),
+      rate503Pct: pct(totals.rate503, totals.arrived),
+      rate429Pct: pct(totals.rate429, totals.arrived)
     },
     latency: {
-      avg: avgLatency,
-      avgQueueDelay,
-      p50: percentile(latencies, 50),
-      p95: percentile(latencies, 95),
-      p99: percentile(latencies, 99),
-      samples: latencies,
+      avg: totals.served ? sumLatency / totals.served : 0,
+      avgQueueDelay: totals.served ? sumQueueDelay / totals.served : 0,
+      p50: percentile(sortedLatencies, 50),
+      p95: percentile(sortedLatencies, 95),
+      p99: percentile(sortedLatencies, 99),
+      samples: sortedLatencies,
       byStatus: latencyByStatus
     },
     limiterLatency: {
-      avg: avgLimiterLatency,
-      p95: percentile(limiterLatencies, 95),
-      p99: percentile(limiterLatencies, 99),
-      peakPending: peakLimiterPending
+      avg: mean(sortedLimiterLatencies),
+      p95: percentile(sortedLimiterLatencies, 95),
+      p99: percentile(sortedLimiterLatencies, 99),
+      peakPending: peaks.limiterPending
     },
     queues: {
-      peakLimiterPending,
-      peakAppQueue,
-      peakDepQueue,
-      peakAppInflight,
-      peakDepInflight
-    },
-    protection: {
-      blockedByLimiter: total429,
-      appLoadAvoided: total429,
-      dependencyLoadAvoided: total429,
-      protectionPct: totalArrived ? (100 * total429) / totalArrived : 0
+      peakLimiterPending: peaks.limiterPending,
+      peakAppQueue: peaks.appQueue,
+      peakDepQueue: peaks.depQueue,
+      peakAppInflight: peaks.appInflight,
+      peakDepInflight: peaks.depInflight
     },
     windowSeries,
     timeline

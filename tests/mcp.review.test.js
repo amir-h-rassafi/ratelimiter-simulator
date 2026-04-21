@@ -29,12 +29,21 @@ const {
 }
 
 {
+  const shared = {
+    rps: 120, depMaxConcurrent: 2, depQueueCapacity: 10, depMaxQueueWaitMs: 100,
+    depLatA: 300, depLatB: 0, depLatencyDist: "constant",
+    latencyDist: "constant", latA: 40, latB: 0
+  };
   const comparison = compareScenarios({
-    base: { windows: [], rps: 120, depMaxConcurrent: 2, depQueueCapacity: 10, depMaxQueueWaitMs: 100, depLatA: 300, depLatB: 0, depLatencyDist: "constant", latencyDist: "constant", latA: 40, latB: 0 },
-    candidate: { windows: [{ windowMs: 1000, limit: 20 }], limiterType: "sliding", rps: 120, depMaxConcurrent: 2, depQueueCapacity: 10, depMaxQueueWaitMs: 100, depLatA: 300, depLatB: 0, depLatencyDist: "constant", latencyDist: "constant", latA: 40, latB: 0 }
+    base: { ...shared, windows: [] },
+    candidate: { ...shared, windows: [{ windowMs: 1000, limit: 20 }], limiterType: "sliding" }
   });
   assert(comparison.candidate.rate429 > comparison.base.rate429);
   assert(comparison.candidate.rate503 <= comparison.base.rate503);
+  // Sign regression: candidate has a limiter, base does not. Candidate should
+  // avoid strictly more backend load than base → positive delta.
+  assert(comparison.delta.appLoadAvoidedVsNoLimiter > 0, `expected positive app-load-avoided delta, got ${comparison.delta.appLoadAvoidedVsNoLimiter}`);
+  assert(comparison.delta.depLoadAvoidedVsNoLimiter > 0, `expected positive dep-load-avoided delta, got ${comparison.delta.depLoadAvoidedVsNoLimiter}`);
 }
 
 console.log("mcp review tests passed");

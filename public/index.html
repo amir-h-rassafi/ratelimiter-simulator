@@ -7,16 +7,21 @@
   <title>Rate Limiter Simulator for HTTP 429, HTTP 503, Queueing, and Latency</title>
   <meta name="description" content="Interactive rate limiter simulator for HTTP 429, HTTP 503, queueing, pending requests, latency distribution, and downstream bottlenecks in distributed systems." />
   <meta name="robots" content="index,follow,max-image-preview:large" />
-  <meta name="keywords" content="rate limiter simulator, HTTP 429 simulator, HTTP 503 simulator, queueing simulator, distributed systems simulator, sliding window rate limiter, latency distribution, bottleneck visualizer" />
   <link rel="canonical" href="https://ratelimiter-simulator.amir-rassafi.workers.dev/" />
   <meta property="og:type" content="website" />
   <meta property="og:title" content="Rate Limiter Simulator for HTTP 429, HTTP 503, Queueing, and Latency" />
   <meta property="og:description" content="Visualize distributed-system rate limiting, queue buildup, latency, and downstream bottlenecks with an interactive browser simulator." />
   <meta property="og:url" content="https://ratelimiter-simulator.amir-rassafi.workers.dev/" />
   <meta property="og:site_name" content="Rate Limiter Simulator" />
+  <meta property="og:image" content="https://ratelimiter-simulator.amir-rassafi.workers.dev/og-image.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Rate Limiter Simulator — incoming traffic, 429 rate-limited, and 503 unavailable over time" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Rate Limiter Simulator for HTTP 429, HTTP 503, Queueing, and Latency" />
   <meta name="twitter:description" content="Interactive browser simulator for rate limiting, queue pressure, latency distribution, and bottleneck analysis." />
+  <meta name="twitter:image" content="https://ratelimiter-simulator.amir-rassafi.workers.dev/og-image.png" />
+  <meta name="twitter:image:alt" content="Rate Limiter Simulator — incoming traffic, 429 rate-limited, and 503 unavailable over time" />
   <script type="application/ld+json">{
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
@@ -24,7 +29,9 @@
     "applicationCategory": "DeveloperApplication",
     "operatingSystem": "Web",
     "url": "https://ratelimiter-simulator.amir-rassafi.workers.dev/",
+    "image": "https://ratelimiter-simulator.amir-rassafi.workers.dev/og-image.png",
     "description": "Interactive browser simulator for HTTP 429, HTTP 503, queueing pressure, latency distribution, and distributed-system rate limiting.",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
     "author": {
       "@type": "Person",
       "name": "Amir Rassafi",
@@ -32,6 +39,10 @@
     }
   }</script>
   <link rel="stylesheet" href="./styles.css" />
+  <script defer src="./simulation.js"></script>
+  <script defer src="./charts.js"></script>
+  <script defer src="./overview.js"></script>
+  <script defer src="./app.js"></script>
 </head>
 <body>
   <main class="container">
@@ -167,6 +178,39 @@
           </div>
         </section>
 
+        <section id="controlPlanePanel" class="panel controls">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Control plane</p>
+              <h2>Rate-Limiter Latency</h2>
+              <p class="panel-copy">Models time spent deciding allow or reject before backend admission.</p>
+            </div>
+          </div>
+          <div class="grid">
+            <label><span>Decision distribution</span>
+              <select id="rlLatencyDist">
+                <option value="constant">Constant</option>
+                <option value="uniform">Uniform</option>
+                <option value="normal">Normal</option>
+                <option value="lognormal">Log-normal</option>
+                <option value="exponential">Exponential</option>
+              </select>
+            </label>
+            <label><span id="rlLatALabel">Decision latency</span>
+              <input id="rlLatA" type="number" step="1" value="8" />
+              <span id="rlLatAHelp" class="field-unit">milliseconds</span>
+            </label>
+            <label><span id="rlLatBLabel">Unused</span>
+              <input id="rlLatB" type="number" step="1" value="4" />
+              <span id="rlLatBHelp" class="field-unit">ignored for constant/exponential</span>
+            </label>
+            <div class="mini-chart">
+              <span id="rlLatencyPreviewLabel">Constant</span>
+              <canvas id="rlLatencyPreview" width="220" height="56"></canvas>
+            </div>
+          </div>
+        </section>
+
         <section id="backendPanel" class="panel controls">
           <div class="panel-heading">
             <div>
@@ -249,38 +293,6 @@
           </div>
         </section>
 
-        <section id="controlPlanePanel" class="panel controls">
-          <div class="panel-heading">
-            <div>
-              <p class="eyebrow">Control plane</p>
-              <h2>Rate-Limiter Latency</h2>
-              <p class="panel-copy">Models time spent deciding allow or reject before backend admission.</p>
-            </div>
-          </div>
-          <div class="grid">
-            <label><span>Decision distribution</span>
-              <select id="rlLatencyDist">
-                <option value="constant">Constant</option>
-                <option value="uniform">Uniform</option>
-                <option value="normal">Normal</option>
-                <option value="lognormal">Log-normal</option>
-                <option value="exponential">Exponential</option>
-              </select>
-            </label>
-            <label><span id="rlLatALabel">Decision latency</span>
-              <input id="rlLatA" type="number" step="1" value="8" />
-              <span id="rlLatAHelp" class="field-unit">milliseconds</span>
-            </label>
-            <label><span id="rlLatBLabel">Unused</span>
-              <input id="rlLatB" type="number" step="1" value="4" />
-              <span id="rlLatBHelp" class="field-unit">ignored for constant/exponential</span>
-            </label>
-            <div class="mini-chart">
-              <span id="rlLatencyPreviewLabel">Constant</span>
-              <canvas id="rlLatencyPreview" width="220" height="56"></canvas>
-            </div>
-          </div>
-        </section>
       </aside>
 
       <section class="content">
@@ -346,9 +358,5 @@
       <a class="about-link" href="https://amir-h-rassafi.github.io/" target="_blank" rel="noreferrer">About me</a>
     </footer>
   </main>
-  <script src="./simulation.js"></script>
-  <script src="./charts.js"></script>
-  <script src="./overview.js"></script>
-  <script src="./app.js"></script>
 </body>
 </html>

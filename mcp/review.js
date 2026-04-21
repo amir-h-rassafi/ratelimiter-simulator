@@ -1,4 +1,4 @@
-const { runSimulation } = require("../simulation.js");
+const { runSimulation } = require("../public/simulation.js");
 
 const COMPONENT_PROFILES = {
   edge: { group: "control", assumption: "Fast edge hop before policy evaluation." },
@@ -18,29 +18,32 @@ const COMPONENT_PROFILES = {
   dependency: { group: "dependency", assumption: "Generic downstream dependency is folded into dependency latency and capacity." }
 };
 
+const STAGE_KEYS = {
+  app: {
+    label: "app-stage",
+    latency: "latA", jitter: "latB", dist: "latencyDist",
+    maxConcurrent: "maxConcurrent", queueCapacity: "queueCapacity", timeout: "maxQueueWaitMs"
+  },
+  dependency: {
+    label: "dependency-stage",
+    latency: "depLatA", jitter: "depLatB", dist: "depLatencyDist",
+    maxConcurrent: "depMaxConcurrent", queueCapacity: "depQueueCapacity", timeout: "depMaxQueueWaitMs"
+  }
+};
+
+const round = (v) => Math.round(v * 100) / 100;
+const sum = (xs) => xs.reduce((a, b) => a + b, 0);
+const defined = (xs) => xs.filter((v) => v != null);
+
 function defaultSimulationConfig() {
   return {
-    durationSec: 15,
-    stepMs: 100,
-    rps: 90,
-    burstiness: 0.4,
-    maxConcurrent: 24,
-    queueCapacity: 3000,
-    maxQueueWaitMs: 1500,
-    limiterType: "sliding",
-    windows: [{ windowMs: 1000, limit: 30 }],
-    rlLatencyDist: "constant",
-    rlLatA: 8,
-    rlLatB: 4,
-    latencyDist: "normal",
-    latA: 800,
-    latB: 35,
-    depMaxConcurrent: 12,
-    depQueueCapacity: 600,
-    depMaxQueueWaitMs: 1000,
-    depLatencyDist: "normal",
-    depLatA: 180,
-    depLatB: 60
+    durationSec: 15, stepMs: 100, rps: 90, burstiness: 0.4,
+    maxConcurrent: 24, queueCapacity: 3000, maxQueueWaitMs: 1500,
+    limiterType: "sliding", windows: [{ windowMs: 1000, limit: 30 }],
+    rlLatencyDist: "constant", rlLatA: 8, rlLatB: 4,
+    latencyDist: "normal", latA: 800, latB: 35,
+    depMaxConcurrent: 12, depQueueCapacity: 600, depMaxQueueWaitMs: 1000,
+    depLatencyDist: "normal", depLatA: 180, depLatB: 60
   };
 }
 
@@ -52,6 +55,10 @@ function summarizeResult(result) {
     served: result.totals.served,
     rate429: result.totals.rate429,
     rate503: result.totals.rate503,
+    appDroppedFull: result.totals.appDroppedFull,
+    appDroppedWait: result.totals.appDroppedWait,
+    depDroppedFull: result.totals.depDroppedFull,
+    depDroppedWait: result.totals.depDroppedWait,
     servedPct: round(result.totals.servedPct),
     rate429Pct: round(result.totals.rate429Pct),
     rate503Pct: round(result.totals.rate503Pct),
@@ -61,32 +68,25 @@ function summarizeResult(result) {
     avgLatency: round(result.latency.avg),
     peakLimiterPending: result.queues.peakLimiterPending,
     peakAppQueue: result.queues.peakAppQueue,
-    peakDepQueue: result.queues.peakDepQueue,
-    protectionPct: round(result.protection.protectionPct),
-    appLoadAvoided: result.protection.appLoadAvoided,
-    dependencyLoadAvoided: result.protection.dependencyLoadAvoided
+    peakDepQueue: result.queues.peakDepQueue
   };
-}
-
-function round(value) {
-  return Math.round(value * 100) / 100;
 }
 
 function mergeConfig(base, overrides = {}) {
   const next = { ...base, ...overrides };
-  if (Array.isArray(overrides.windows)) next.windows = overrides.windows.map((item) => ({ ...item }));
+  if (Array.isArray(overrides.windows)) next.windows = overrides.windows.map((w) => ({ ...w }));
   return next;
 }
 
 function reviewRateLimitConfig(config) {
   const warnings = [];
-  if (!config.windows || config.windows.length === 0) {
+  const wins = config.windows || [];
+  if (!wins.length) {
     warnings.push("No limiter rules configured. The model will never emit 429, only downstream 503 under saturation.");
-  }
-  if (config.windows && config.windows.length > 0) {
-    const minWindowLimit = Math.min(...config.windows.map((w) => w.limit));
-    if (minWindowLimit <= 0) warnings.push("Limiter contains a zero-or-negative limit, which will reject nearly all traffic.");
-    if (config.depMaxConcurrent && minWindowLimit > config.depMaxConcurrent * 20) {
+  } else {
+    const minLimit = Math.min(...wins.map((w) => w.limit));
+    if (minLimit <= 0) warnings.push("Limiter contains a zero-or-negative limit, which will reject nearly all traffic.");
+    if (config.depMaxConcurrent && minLimit > config.depMaxConcurrent * 20) {
       warnings.push("Limiter looks looser than downstream capacity. Expect 503 to dominate instead of 429.");
     }
   }
@@ -99,80 +99,49 @@ function reviewRateLimitConfig(config) {
   return warnings;
 }
 
-function makeStageAccumulator(defaults, fallbackDistKey) {
-  return {
-    components: [],
-    latencyMs: 0,
-    jitterVar: 0,
-    hasLatency: false,
-    hasJitter: false,
-    latencyDist: defaults[fallbackDistKey],
-    hasDist: false,
-    maxConcurrent: [],
-    queueCapacity: [],
-    timeoutMs: []
-  };
-}
+// Collapse N components in a group into the flat simulator's single stage.
+// Latency sums, jitter combines in quadrature, capacity/queue/timeout take
+// the tightest bound — each of those is a lossy model simplification.
+function collapseStage(components, config, keys, warnings) {
+  if (!components.length) return [];
+  const names = components.map((c) => c.name || c.kind);
+  const latencies = defined(components.map((c) => c.latencyMs));
+  const jitters = defined(components.map((c) => c.jitterMs));
+  const dists = components.map((c) => c.latencyDist).filter(Boolean);
+  const maxConc = defined(components.map((c) => c.maxConcurrent));
+  const caps = defined(components.map((c) => c.queueCapacity));
+  const timeouts = defined(components.map((c) => c.timeoutMs));
 
-function ingestStageComponent(stage, component, warnings, groupLabel) {
-  stage.components.push(component.name || component.kind);
-  if (component.latencyMs != null) {
-    stage.latencyMs += component.latencyMs;
-    stage.hasLatency = true;
-  }
-  if (component.jitterMs != null) {
-    stage.jitterVar += component.jitterMs * component.jitterMs;
-    stage.hasJitter = true;
-  }
-  if (component.latencyDist) {
-    if (stage.hasDist && stage.latencyDist !== component.latencyDist) {
+  if (latencies.length) config[keys.latency] = sum(latencies);
+  if (jitters.length) config[keys.jitter] = round(Math.sqrt(sum(jitters.map((j) => j * j))));
+  if (dists.length) {
+    config[keys.dist] = dists[0];
+    if (dists.some((d) => d !== dists[0])) {
       warnings.push(
-        `Multiple ${groupLabel} latency distributions were provided (${stage.latencyDist}, ${component.latencyDist}). Using ${stage.latencyDist} for the collapsed stage.`
+        `Multiple ${keys.label} latency distributions were provided (${[...new Set(dists)].join(", ")}). Using ${dists[0]} for the collapsed stage.`
       );
-    } else {
-      stage.latencyDist = component.latencyDist;
-      stage.hasDist = true;
     }
   }
-  if (component.maxConcurrent != null) stage.maxConcurrent.push(component.maxConcurrent);
-  if (component.queueCapacity != null) stage.queueCapacity.push(component.queueCapacity);
-  if (component.timeoutMs != null) stage.timeoutMs.push(component.timeoutMs);
-}
-
-function applyStageAccumulator(config, stage, keys, warnings, groupLabel) {
-  if (!stage.components.length) return;
-  if (stage.hasLatency) config[keys.latency] = stage.latencyMs;
-  if (stage.hasJitter) config[keys.jitter] = round(Math.sqrt(stage.jitterVar));
-  config[keys.dist] = stage.latencyDist;
-  if (stage.maxConcurrent.length) config[keys.maxConcurrent] = Math.min(...stage.maxConcurrent);
-  if (stage.queueCapacity.length) config[keys.queueCapacity] = Math.min(...stage.queueCapacity);
-  if (stage.timeoutMs.length) config[keys.timeout] = Math.min(...stage.timeoutMs);
-  if (stage.components.length > 1) {
+  if (maxConc.length) config[keys.maxConcurrent] = Math.min(...maxConc);
+  if (caps.length) config[keys.queueCapacity] = Math.min(...caps);
+  if (timeouts.length) config[keys.timeout] = Math.min(...timeouts);
+  if (components.length > 1) {
     warnings.push(
-      `Multiple ${groupLabel} components were collapsed into one simulator stage. Latency was summed, jitter combined, and concurrency/queue/timeout were reduced to the tightest bound.`
+      `Multiple ${keys.label} components were collapsed into one simulator stage. Latency was summed, jitter combined, and concurrency/queue/timeout were reduced to the tightest bound.`
     );
   }
+  return names;
 }
 
 function normalizeComponentPath(input = {}) {
   const warnings = [];
   const assumptions = [];
   const config = mergeConfig(defaultSimulationConfig(), input.defaults || {});
-  const components = Array.isArray(input.components) ? input.components : [];
+  if (input.traffic) Object.assign(config, input.traffic);
 
-  if (input.traffic) {
-    Object.assign(config, input.traffic);
-  }
-
+  const grouped = { control: [], app: [], dependency: [] };
   const windows = [];
-  let controlLatency = 0;
-  let controlLatencyVar = 0;
-  let appSeen = false;
-  let depSeen = false;
-  const appStage = makeStageAccumulator(config, "latencyDist");
-  const depStage = makeStageAccumulator(config, "depLatencyDist");
-
-  for (const component of components) {
+  for (const component of input.components || []) {
     const kind = String(component.kind || "").toLowerCase();
     const profile = COMPONENT_PROFILES[kind];
     if (!profile) {
@@ -180,66 +149,26 @@ function normalizeComponentPath(input = {}) {
       continue;
     }
     assumptions.push({ component: component.name || kind, kind, assumption: profile.assumption });
-
-    if (profile.group === "control") {
-      const latency = component.latencyMs ?? 0;
-      const jitter = component.jitterMs ?? 0;
-      controlLatency += latency;
-      controlLatencyVar += jitter * jitter;
-      if (component.rateLimiter && Array.isArray(component.rateLimiter.windows)) {
-        if (component.rateLimiter.type) config.limiterType = component.rateLimiter.type;
-        for (const window of component.rateLimiter.windows) {
-          windows.push({ windowMs: window.windowMs, limit: window.limit });
-        }
+    grouped[profile.group].push(component);
+    if (profile.group === "control" && Array.isArray(component.rateLimiter?.windows)) {
+      if (component.rateLimiter.type) config.limiterType = component.rateLimiter.type;
+      for (const w of component.rateLimiter.windows) {
+        windows.push({ windowMs: w.windowMs, limit: w.limit });
       }
-      continue;
-    }
-
-    if (profile.group === "app") {
-      appSeen = true;
-      ingestStageComponent(appStage, component, warnings, "app-stage");
-      continue;
-    }
-
-    if (profile.group === "dependency") {
-      depSeen = true;
-      ingestStageComponent(depStage, component, warnings, "dependency-stage");
     }
   }
 
+  const controlLatency = sum(grouped.control.map((c) => c.latencyMs ?? 0));
+  const controlJitterVar = sum(grouped.control.map((c) => (c.jitterMs ?? 0) ** 2));
   config.rlLatA = Math.max(1, controlLatency || config.rlLatA);
-  config.rlLatB = Math.max(0, Math.sqrt(controlLatencyVar) || config.rlLatB);
-  applyStageAccumulator(
-    config,
-    appStage,
-    {
-      latency: "latA",
-      jitter: "latB",
-      dist: "latencyDist",
-      maxConcurrent: "maxConcurrent",
-      queueCapacity: "queueCapacity",
-      timeout: "maxQueueWaitMs"
-    },
-    warnings,
-    "app-stage"
-  );
-  applyStageAccumulator(
-    config,
-    depStage,
-    {
-      latency: "depLatA",
-      jitter: "depLatB",
-      dist: "depLatencyDist",
-      maxConcurrent: "depMaxConcurrent",
-      queueCapacity: "depQueueCapacity",
-      timeout: "depMaxQueueWaitMs"
-    },
-    warnings,
-    "dependency-stage"
-  );
+  config.rlLatB = Math.max(0, Math.sqrt(controlJitterVar) || config.rlLatB);
+
+  const appNames = collapseStage(grouped.app, config, STAGE_KEYS.app, warnings);
+  const depNames = collapseStage(grouped.dependency, config, STAGE_KEYS.dependency, warnings);
+
   if (windows.length) config.windows = windows;
-  if (!appSeen) warnings.push("No explicit app component provided. Default app capacity assumptions were used.");
-  if (!depSeen) warnings.push("No explicit dependency component provided. Default downstream assumptions were used.");
+  if (!grouped.app.length) warnings.push("No explicit app component provided. Default app capacity assumptions were used.");
+  if (!grouped.dependency.length) warnings.push("No explicit dependency component provided. Default downstream assumptions were used.");
   warnings.push(...reviewRateLimitConfig(config));
 
   return {
@@ -248,28 +177,20 @@ function normalizeComponentPath(input = {}) {
     warnings,
     collapse: {
       control: {
-        componentCount: assumptions.filter((item) => COMPONENT_PROFILES[item.kind].group === "control").length,
+        componentCount: grouped.control.length,
         latencyMs: round(config.rlLatA),
         jitterMs: round(config.rlLatB),
         windows: config.windows
       },
       app: {
-        components: appStage.components,
-        latencyMs: round(config.latA),
-        jitterMs: round(config.latB),
-        latencyDist: config.latencyDist,
-        maxConcurrent: config.maxConcurrent,
-        queueCapacity: config.queueCapacity,
-        timeoutMs: config.maxQueueWaitMs
+        components: appNames,
+        latencyMs: round(config.latA), jitterMs: round(config.latB), latencyDist: config.latencyDist,
+        maxConcurrent: config.maxConcurrent, queueCapacity: config.queueCapacity, timeoutMs: config.maxQueueWaitMs
       },
       dependency: {
-        components: depStage.components,
-        latencyMs: round(config.depLatA),
-        jitterMs: round(config.depLatB),
-        latencyDist: config.depLatencyDist,
-        maxConcurrent: config.depMaxConcurrent,
-        queueCapacity: config.depQueueCapacity,
-        timeoutMs: config.depMaxQueueWaitMs
+        components: depNames,
+        latencyMs: round(config.depLatA), jitterMs: round(config.depLatB), latencyDist: config.depLatencyDist,
+        maxConcurrent: config.depMaxConcurrent, queueCapacity: config.depQueueCapacity, timeoutMs: config.depMaxQueueWaitMs
       }
     }
   };
@@ -278,33 +199,34 @@ function normalizeComponentPath(input = {}) {
 function simulateScenario(input = {}) {
   const config = mergeConfig(defaultSimulationConfig(), input.config || input);
   const result = runSimulation(config);
-  return {
-    config,
-    summary: summarizeResult(result),
-    warnings: reviewRateLimitConfig(config),
-    result
-  };
+  return { config, summary: summarizeResult(result), warnings: reviewRateLimitConfig(config), result };
 }
 
 function compareScenarios(input = {}) {
   const base = simulateScenario({ config: input.base });
   const candidate = simulateScenario({ config: input.candidate });
+  const deltaKeys = [
+    "served", "rate429", "rate503", "enteredApp", "enteredDependency",
+    "peakAppQueue", "peakDepQueue",
+    "appDroppedFull", "appDroppedWait", "depDroppedFull", "depDroppedWait"
+  ];
+  const delta = Object.fromEntries(deltaKeys.map((k) => [k, candidate.summary[k] - base.summary[k]]));
+  delta.p95 = round(candidate.summary.p95 - base.summary.p95);
+  // Paired no-limiter runs let us attribute load reduction honestly,
+  // rather than equating every 429 with an avoided backend hit.
+  // Positive delta = candidate limiter protects backend more than base.
+  const openBase = runSimulation(mergeConfig(defaultSimulationConfig(), { ...(input.base || {}), windows: [] }));
+  const openCand = runSimulation(mergeConfig(defaultSimulationConfig(), { ...(input.candidate || {}), windows: [] }));
+  const baseAppAvoided = openBase.totals.enteredApp - base.summary.enteredApp;
+  const candAppAvoided = openCand.totals.enteredApp - candidate.summary.enteredApp;
+  const baseDepAvoided = openBase.totals.enteredDependency - base.summary.enteredDependency;
+  const candDepAvoided = openCand.totals.enteredDependency - candidate.summary.enteredDependency;
+  delta.appLoadAvoidedVsNoLimiter = candAppAvoided - baseAppAvoided;
+  delta.depLoadAvoidedVsNoLimiter = candDepAvoided - baseDepAvoided;
   return {
     base: base.summary,
     candidate: candidate.summary,
-    delta: {
-      served: candidate.summary.served - base.summary.served,
-      rate429: candidate.summary.rate429 - base.summary.rate429,
-      rate503: candidate.summary.rate503 - base.summary.rate503,
-      enteredApp: candidate.summary.enteredApp - base.summary.enteredApp,
-      enteredDependency: candidate.summary.enteredDependency - base.summary.enteredDependency,
-      p95: round(candidate.summary.p95 - base.summary.p95),
-      peakAppQueue: candidate.summary.peakAppQueue - base.summary.peakAppQueue,
-      peakDepQueue: candidate.summary.peakDepQueue - base.summary.peakDepQueue,
-      protectionPct: round(candidate.summary.protectionPct - base.summary.protectionPct),
-      appLoadAvoided: candidate.summary.appLoadAvoided - base.summary.appLoadAvoided,
-      dependencyLoadAvoided: candidate.summary.dependencyLoadAvoided - base.summary.dependencyLoadAvoided
-    },
+    delta,
     warnings: [...new Set([...base.warnings, ...candidate.warnings])]
   };
 }

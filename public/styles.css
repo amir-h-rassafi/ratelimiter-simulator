@@ -611,6 +611,7 @@ button:hover {
   font-size: 1.12rem;
   font-weight: 600;
   overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
 }
 
 .kpi[data-kind="served"] {

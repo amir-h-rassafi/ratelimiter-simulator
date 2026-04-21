@@ -99,7 +99,7 @@ node mcp/server.js
 ## Run locally
 
 ```bash
-python3 -m http.server 8080
+python3 -m http.server 8080 -d public
 ```
 
 Open `http://localhost:8080`.

@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 
-const source = fs.readFileSync(path.join(__dirname, "..", "simulation.js"), "utf8");
+const source = fs.readFileSync(path.join(__dirname, "..", "public", "simulation.js"), "utf8");
 const context = { Math, console };
 vm.createContext(context);
 vm.runInContext(`${source}\nthis.runSimulation = runSimulation;`, context);
@@ -226,6 +226,70 @@ function assertNoNaN(result) {
   assert.strictEqual(result.totals.rate503, 0, "healthy config should not hit backend drops");
   assertNoNaN(result);
   assertLatencyAccounting(result);
+}
+
+// Regression: jittered limiter decision latency used to scramble sliding-window
+// commit order, which could let the limiter over-admit because out-of-order
+// events broke evict()'s prefix-scan assumption. With sorted processing the
+// served count must stay bounded by the limit.
+{
+  const durationSec = 4;
+  const limit = 5;
+  const windowMs = 1000;
+  const result = run({
+    durationSec,
+    stepMs: 100,
+    rps: 500,
+    burstiness: 0,
+    trafficNoise: false,
+    windows: [{ windowMs, limit }],
+    limiterType: "sliding",
+    rlLatencyDist: "uniform",
+    rlLatA: 1,
+    rlLatB: 90,
+    maxConcurrent: 1000,
+    queueCapacity: 0,
+    maxQueueWaitMs: 1,
+    latencyDist: "constant",
+    latA: 1,
+    depMaxConcurrent: 1000,
+    depQueueCapacity: 0,
+    depMaxQueueWaitMs: 1,
+    depLatencyDist: "constant",
+    depLatA: 1
+  });
+  const ceiling = Math.ceil((durationSec * 1000) / windowMs) * limit + limit;
+  assert(
+    result.totals.rate429 + result.totals.served >= result.totals.arrived - 5,
+    "429+served should account for nearly all arrivals when backend is ample"
+  );
+  assert(
+    result.totals.served <= ceiling,
+    `sliding window must bound served by ~${ceiling}; got ${result.totals.served}`
+  );
+}
+
+{
+  const result = run({
+    windows: [{ windowMs: 1000, limit: 1 }],
+    maxConcurrent: 1,
+    queueCapacity: 0,
+    maxQueueWaitMs: 1,
+    latencyDist: "constant",
+    latA: 1000
+  });
+  assert(result.totals.appDroppedFull >= 0, "per-stage app drop-full counter must exist");
+  assert(result.totals.depDroppedFull >= 0, "per-stage dep drop-full counter must exist");
+  assert.strictEqual(
+    result.totals.droppedFull,
+    result.totals.appDroppedFull + result.totals.depDroppedFull,
+    "droppedFull alias must equal app+dep drop-full sum"
+  );
+  assert.strictEqual(
+    result.totals.droppedWait,
+    result.totals.appDroppedWait + result.totals.depDroppedWait,
+    "droppedWait alias must equal app+dep drop-wait sum"
+  );
 }
 
 console.log("simulation sanity tests passed");
