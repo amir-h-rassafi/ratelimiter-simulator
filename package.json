@@ -1,0 +1,9 @@
+{
+  "name": "ratelimit-simulator",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "test": "node tests/simulation.test.js && node tests/mcp.review.test.js",
+    "mcp": "node mcp/server.js"
+  }
+}

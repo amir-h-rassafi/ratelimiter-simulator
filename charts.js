@@ -128,11 +128,23 @@ function drawLineChart(canvasId, series, maxYOverride, yLabel, hoverIndex = null
   }
 }
 
+function nextLatencyAxisMax(value) {
+  const safe = Math.max(10, value);
+  const exponent = Math.ceil(Math.log10(safe));
+  return 10 ** exponent;
+}
+
+function latencyTickValues(max) {
+  const ticks = [0];
+  for (let value = 10; value <= max; value *= 10) ticks.push(value);
+  return ticks;
+}
+
 function histogram(values, binCount) {
-  if (!values.length) return { bins: [], max: 1 };
-  const min = values[0];
-  const max = values[values.length - 1];
-  const width = Math.max(1, (max - min) / binCount);
+  if (!values.length) return { bins: [], max: 1, domainMax: 10 };
+  const min = 0;
+  const max = nextLatencyAxisMax(values[values.length - 1]);
+  const width = Math.max(1, max / binCount);
   const bins = Array.from({ length: binCount }, (_, i) => ({
     from: min + i * width,
     to: min + (i + 1) * width,
@@ -144,10 +156,10 @@ function histogram(values, binCount) {
     bins[idx].count += 1;
   }
 
-  return { bins, max: Math.max(1, ...bins.map((b) => b.count)) };
+  return { bins, max: Math.max(1, ...bins.map((b) => b.count)), domainMax: max };
 }
 
-function drawLatencyAxis(ctx, w, h, pad, bins, maxCount) {
+function drawLatencyAxis(ctx, w, h, pad, bins, maxCount, domainMax) {
   const innerW = w - 2 * pad;
   const innerH = h - 2 * pad;
   const maxY = niceChartMax(maxCount);
@@ -185,13 +197,19 @@ function drawLatencyAxis(ctx, w, h, pad, bins, maxCount) {
 
   if (!bins.length) return maxY;
 
-  const min = bins[0].from;
-  const max = bins[bins.length - 1].to;
-  ctx.textAlign = "center";
-  for (let i = 0; i <= 4; i += 1) {
-    const x = pad + (i * innerW) / 4;
-    const value = min + (i * (max - min)) / 4;
-    ctx.fillText(`${Math.round(value)} ms`, x, h - pad + 22);
+  const max = Math.max(10, domainMax || bins[bins.length - 1].to);
+  const ticks = latencyTickValues(max);
+  let lastRight = -Infinity;
+  for (const value of ticks) {
+    const x = pad + (value / max) * innerW;
+    const label = String(value);
+    const width = ctx.measureText(label).width;
+    const left = x - width / 2;
+    const right = x + width / 2;
+    if (left <= lastRight + 8 && value !== 0 && value !== max) continue;
+    ctx.textAlign = value === 0 ? "left" : value === max ? "right" : "center";
+    ctx.fillText(label, x, h - pad + 22);
+    lastRight = right;
   }
 
   return maxY;
@@ -209,13 +227,13 @@ function drawLatencyHistogram(series) {
   const activeSeries = (series || []).filter((s) => s && s.samples && s.samples.length);
   const allSamples = activeSeries.flatMap((s) => s.samples).sort((a, b) => a - b);
   const baseHist = histogram(allSamples, 32);
-  const maxY = drawLatencyAxis(ctx, w, h, pad, baseHist.bins, baseHist.max);
+  const maxY = drawLatencyAxis(ctx, w, h, pad, baseHist.bins, baseHist.max, baseHist.domainMax);
   if (!baseHist.bins.length) return;
 
   const innerW = w - 2 * pad;
   const innerH = h - 2 * pad;
-  const min = baseHist.bins[0].from;
-  const max = baseHist.bins[baseHist.bins.length - 1].to;
+  const min = 0;
+  const max = baseHist.domainMax || baseHist.bins[baseHist.bins.length - 1].to;
   const width = Math.max(1, (max - min) / 32);
   const binW = innerW / 32;
   const seriesCount = activeSeries.length;
@@ -321,17 +339,23 @@ function drawSparkline(canvasId, values, color = "#5f6368") {
   ctx.stroke();
 }
 
-function buildTrafficPreview(durationSec, rps, burstiness) {
+function buildTrafficPreview(durationSec, rps, burstiness, trafficNoise = false) {
   const count = 64;
+  const steps = Math.max(1, count - 1);
   return Array.from({ length: count }, (_, i) => {
-    const step = i / Math.max(1, count - 1);
-    const phase = (2 * Math.PI * step * durationSec) / Math.max(10, durationSec / 2);
-    return Math.max(0, rps * (1 + burstiness * Math.sin(phase)));
+    const expected = expectedTrafficRpsAt(i, steps, rps, burstiness);
+    if (!trafficNoise) return expected;
+    const wave = Math.sin((i + 1) * 12.9898) * 43758.5453;
+    const frac = wave - Math.floor(wave);
+    const centered = (frac - 0.5) * 0.35;
+    return Math.max(0, expected * (1 + centered));
   });
 }
 
-function trafficPreviewLabel(durationSec, rps, burstiness) {
-  return `${Math.round(rps)} rps with ${Math.round(burstiness * 100)}% burst wave over ${Math.round(durationSec)}s`;
+function trafficPreviewLabel(durationSec, rps, burstiness, trafficNoise = false) {
+  const suffix = trafficNoise ? " with random noise enabled" : " with deterministic arrivals";
+  if (burstiness <= 0) return `Expected offered traffic: flat at ${Math.round(rps)} rps over ${Math.round(durationSec)}s${suffix}`;
+  return `Expected offered traffic: ${Math.round(rps)} rps baseline with a ${Math.round(burstiness * 100)}% burst wave over ${Math.round(durationSec)}s${suffix}`;
 }
 
 function buildLimiterPreview(windows) {

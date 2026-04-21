@@ -49,6 +49,15 @@ function percentile(sorted, p) {
   return sorted[clamp(idx, 0, sorted.length - 1)];
 }
 
+function trafficWaveMultiplier(step, steps, burstiness) {
+  const phase = (2 * Math.PI * step) / Math.max(10, steps / 2);
+  return Math.max(0, 1 + burstiness * Math.sin(phase));
+}
+
+function expectedTrafficRpsAt(step, steps, rps, burstiness) {
+  return Math.max(0, rps * trafficWaveMultiplier(step, steps, burstiness));
+}
+
 class FixedWindowLimiter {
   constructor(limit, windowMs) {
     this.limit = limit;
@@ -137,6 +146,7 @@ function runSimulation(cfg) {
     stepMs,
     rps,
     burstiness,
+    trafficNoise = false,
     maxConcurrent,
     queueCapacity,
     maxQueueWaitMs,
@@ -184,6 +194,7 @@ function runSimulation(cfg) {
   let sumLatency = 0;
   let sumQueueDelay = 0;
   let peakLimiterPending = 0;
+  let trafficArrivalAccumulator = 0;
   let peakAppQueue = 0;
   let peakDepQueue = 0;
   let peakAppInflight = 0;
@@ -242,6 +253,7 @@ function runSimulation(cfg) {
 
   for (let step = 0; step <= steps; step += 1) {
     const now = step * stepMs;
+    const bucketEnd = now + stepMs;
     let step429 = 0;
     let step503 = 0;
     let stepAccepted = 0;
@@ -319,10 +331,16 @@ function runSimulation(cfg) {
       });
     }
 
-    const phase = (2 * Math.PI * step) / Math.max(10, steps / 2);
-    const trafficMultiplier = 1 + burstiness * Math.sin(phase);
-    const expectedInStep = (rps * trafficMultiplier * stepMs) / 1000;
-    const arrivals = poisson(Math.max(0, expectedInStep));
+    const expectedRps = expectedTrafficRpsAt(step, steps, rps, burstiness);
+    const expectedInStep = (expectedRps * stepMs) / 1000;
+    let arrivals = 0;
+    if (trafficNoise) {
+      arrivals = poisson(Math.max(0, expectedInStep));
+    } else {
+      trafficArrivalAccumulator += Math.max(0, expectedInStep);
+      arrivals = Math.floor(trafficArrivalAccumulator);
+      trafficArrivalAccumulator -= arrivals;
+    }
 
     for (let i = 0; i < arrivals; i += 1) {
       const decisionLatencyMs = sampleLatencyMs(rlLatencyDist, rlLatA, rlLatB);
@@ -336,13 +354,14 @@ function runSimulation(cfg) {
     totalArrived += arrivals;
 
     for (let i = limiterPending.length - 1; i >= 0; i -= 1) {
-      if (limiterPending[i].decisionReadyMs > now) continue;
+      if (limiterPending[i].decisionReadyMs > bucketEnd) continue;
       const pendingReq = limiterPending[i];
       limiterPending.splice(i, 1);
+      const decisionTime = pendingReq.decisionReadyMs;
 
       let blockedIdx = -1;
       for (let j = 0; j < limiters.length; j += 1) {
-        if (!limiters[j].canAllow(pendingReq.decisionReadyMs)) {
+        if (!limiters[j].canAllow(decisionTime)) {
           blockedIdx = j;
           break;
         }
@@ -351,17 +370,17 @@ function runSimulation(cfg) {
       if (blockedIdx >= 0) {
         total429 += 1;
         step429 += 1;
-        latencyByStatus.s429.push(pendingReq.decisionLatencyMs);
+        latencyByStatus.s429.push(decisionTime - pendingReq.arrivalMs);
         windowSeries[blockedIdx].blocked += 1;
         continue;
       }
 
       for (let j = 0; j < limiters.length; j += 1) {
-        limiters[j].commit(pendingReq.decisionReadyMs);
+        limiters[j].commit(decisionTime);
       }
       stepAccepted += 1;
 
-      const entered = startApp(now, { arrivalMs: now });
+      const entered = startApp(decisionTime, { arrivalMs: pendingReq.arrivalMs });
       if (!entered) step503 += 1;
     }
 
@@ -384,6 +403,7 @@ function runSimulation(cfg) {
       depActive: depInflight.length,
       depQueued: depQueue.length,
       limiterPending: limiterPending.length,
+      expectedArrivalsPerSec: Math.round(expectedRps),
       arrivalsPerSec: Math.round((arrivals * 1000) / stepMs),
       acceptedPerSec: Math.round((stepAccepted * 1000) / stepMs),
       r429PerSec: Math.round((step429 * 1000) / stepMs),
@@ -451,4 +471,28 @@ function runSimulation(cfg) {
     windowSeries,
     timeline
   };
+}
+
+
+const simulationApi = {
+  clamp,
+  normal,
+  poisson,
+  sampleLatencyMs,
+  percentile,
+  FixedWindowLimiter,
+  SlidingWindowLimiter,
+  createLimiter,
+  makeWindowSeries,
+  trafficWaveMultiplier,
+  expectedTrafficRpsAt,
+  runSimulation
+};
+
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = simulationApi;
+}
+
+if (typeof window !== "undefined") {
+  Object.assign(window, simulationApi);
 }

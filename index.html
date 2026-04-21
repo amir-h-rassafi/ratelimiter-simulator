@@ -83,7 +83,7 @@
             <div>
               <p class="eyebrow">Inputs</p>
               <h2>Traffic</h2>
-              <p class="panel-copy">Controls how many requests enter the system.</p>
+              <p class="panel-copy">Target RPS sets the baseline offered traffic. Burst factor adds a smooth wave around that baseline. A burst factor of 0 means the expected traffic shape is flat.</p>
             </div>
           </div>
           <div class="grid">
@@ -96,14 +96,18 @@
               <span class="field-unit">milliseconds</span>
             </label>
             <label><span>Target RPS</span>
-              <input id="rps" type="number" min="0" step="1" value="90" />
-              <input id="rpsRange" class="range-input" type="range" min="0" max="300" step="5" value="90" data-sync-target="rps" />
+              <input id="rps" type="number" min="0" step="1" value="40" />
+              <input id="rpsRange" class="range-input" type="range" min="0" max="300" step="5" value="40" data-sync-target="rps" />
               <span class="field-unit">requests/sec</span>
             </label>
             <label><span>Burst factor</span>
               <input id="burstiness" type="number" min="0" max="1" step="0.05" value="0.4" />
               <input id="burstinessRange" class="range-input" type="range" min="0" max="1" step="0.05" value="0.4" data-sync-target="burstiness" />
-              <span class="field-unit">0 to 1</span>
+              <span class="field-unit">0 means flat expected traffic. Higher values add a smooth burst wave.</span>
+            </label>
+            <label class="checkbox-field"><span>Traffic noise</span>
+              <span class="checkbox-row"><input id="trafficNoise" type="checkbox" /> <span>Sample arrivals with random noise around the expected traffic shape</span></span>
+              <span class="field-unit">Off by default. When disabled, arrivals follow the expected shape deterministically.</span>
             </label>
             <label><span>App active capacity</span>
               <input id="maxConcurrent" type="number" min="1" step="1" value="24" />
@@ -122,7 +126,7 @@
               <span class="field-unit">How long a request may remain pending before the app path returns 503</span>
             </label>
             <div class="mini-chart">
-              <span id="trafficPreviewLabel">90 rps with 40% burst wave over 30s</span>
+              <span id="trafficPreviewLabel">Expected offered traffic: 40 rps baseline with a 40% burst wave over 15s</span>
               <canvas id="trafficPreview" width="220" height="56"></canvas>
             </div>
           </div>
@@ -295,7 +299,7 @@
             <div>
               <p class="eyebrow">Time series</p>
               <h2>Capacity, Admissions, and Rejections</h2>
-              <p class="panel-copy">429 means limiter reject. 503 means app or dependency capacity ran out.</p>
+              <p class="panel-copy">Incoming Traffic/s shows what is actually fed into the limiter. Expected Traffic/s is the configured offered shape. 429 means limiter reject. 503 means app or dependency capacity ran out.</p>
             </div>
           </div>
           <div id="seriesToggles" class="toggles"></div>

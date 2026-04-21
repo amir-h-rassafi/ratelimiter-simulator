@@ -34,8 +34,9 @@ function updateDistributionPreviews() {
   const durationSec = getNum("durationSec");
   const rps = getNum("rps");
   const burstiness = getNum("burstiness");
-  setText("trafficPreviewLabel", trafficPreviewLabel(durationSec, rps, burstiness));
-  drawSparkline("trafficPreview", buildTrafficPreview(durationSec, rps, burstiness), "#1a73e8");
+  const trafficNoise = document.getElementById("trafficNoise").checked;
+  setText("trafficPreviewLabel", trafficPreviewLabel(durationSec, rps, burstiness, trafficNoise));
+  drawSparkline("trafficPreview", buildTrafficPreview(durationSec, rps, burstiness, trafficNoise), "#1a73e8");
   const windows = readWindows();
   setText("limiterPreviewLabel", limiterPreviewLabel(windows, document.getElementById("limiterType").value));
   drawLimiterWindowPreview("limiterPreview", windows, document.getElementById("limiterType").value, "#d93025");
@@ -67,13 +68,14 @@ function updateDistributionPreviews() {
 
 const COOKIE_NAME = "rl_sim_state";
 const COOKIE_TTL_SEC = 60 * 60 * 24 * 180;
-const UI_STATE_VERSION = 13;
+const UI_STATE_VERSION = 14;
 const PANEL_STATE_STORAGE_KEY = "rl_sim_collapsed_panels";
 const CONTROL_IDS = [
   "durationSec",
   "stepMs",
   "rps",
   "burstiness",
+  "trafficNoise",
   "maxConcurrent",
   "queueCapacity",
   "maxQueueWaitMs",
@@ -164,7 +166,8 @@ function applyStateToUi(saved) {
     for (const id of CONTROL_IDS) {
       const el = document.getElementById(id);
       if (el && saved.controls[id] !== undefined) {
-        el.value = String(saved.controls[id]);
+        if (el.type === "checkbox") el.checked = Boolean(saved.controls[id]);
+        else el.value = String(saved.controls[id]);
       }
     }
   }
@@ -265,6 +268,7 @@ function buildMergedSeries(result) {
     { key: "active", label: "App Active", color: "#1a73e8", values: result.timeline.map((p) => p.active) },
     { key: "depActive", label: "Dependency Active", color: "#5e35b1", values: result.timeline.map((p) => p.depActive) },
     { key: "arrivals", label: "Incoming Traffic/s", color: "#3c4043", values: result.timeline.map((p) => p.arrivalsPerSec), emphasis: true },
+    { key: "expectedTraffic", label: "Expected Traffic/s", color: "#9aa0a6", values: result.timeline.map((p) => p.expectedArrivalsPerSec ?? p.arrivalsPerSec) },
     { key: "rlPending", label: "Limiter Queue", color: "#59636e", values: result.timeline.map((p) => p.limiterPending) }
   ];
   const windows = result.windowSeries.map((w, i) => ({
@@ -621,6 +625,7 @@ function readConfig() {
     stepMs: clamp(getNum("stepMs"), 1, 2000),
     rps: clamp(getNum("rps"), 0, 200000),
     burstiness: clamp(getNum("burstiness"), 0, 1),
+    trafficNoise: document.getElementById("trafficNoise").checked,
     maxConcurrent: clamp(getNum("maxConcurrent"), 1, 100000),
     queueCapacity: clamp(getNum("queueCapacity"), 0, 1000000),
     maxQueueWaitMs: clamp(getNum("maxQueueWaitMs"), 0, 600000),
