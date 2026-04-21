@@ -96,6 +96,19 @@ A local MCP client can then connect to the server over stdio using:
 node mcp/server.js
 ```
 
+### Add to Claude Code or Codex
+
+Add this MCP server as a local stdio server:
+
+```json
+{
+  "command": "node",
+  "args": ["mcp/server.js"]
+}
+```
+
+Set the working directory to this repo so the relative path resolves correctly.
+
 ## Run locally
 
 ```bash
