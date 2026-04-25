@@ -123,6 +123,12 @@ Run the local tests:
 npm test
 ```
 
+Run a pretty colored MCP sample:
+
+```bash
+npm run mcp:sample
+```
+
 Run a dependency-free benchmark:
 
 ```bash
