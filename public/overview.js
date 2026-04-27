@@ -67,7 +67,104 @@ function stageLabel(state) {
   return "stable";
 }
 
+function pressureLevel(pct, state) {
+  if (state === "bad") return { label: "critical", kind: "bad" };
+  if (pct >= 85) return { label: "high", kind: "warn" };
+  if (pct >= 55) return { label: "medium", kind: "warn" };
+  return { label: "low", kind: "ok" };
+}
+
+function buildCauseAnalysis(result, cfg, values) {
+  const {
+    wsDropped,
+    limiterDropped,
+    appDropped,
+    depDropped,
+    wsActivePct,
+    wsQueuePct,
+    limiterActivePct,
+    limiterQueuePct,
+    appActivePct,
+    appQueuePct,
+    depActivePct
+  } = values;
+  const typicalPathMs = result.limiterLatency.p95 + cfg.latA + cfg.depLatA;
+
+  if (result.totals.wsDroppedTimeout > 0) {
+    const slowest = [
+      { name: "limiter decision", ms: result.limiterLatency.p95 },
+      { name: "service latency", ms: cfg.latA },
+      { name: "downstream latency", ms: cfg.depLatA }
+    ].sort((a, b) => b.ms - a.ms)[0];
+    return {
+      kind: "bad",
+      title: "Wrong decision: request deadline is too small",
+      detail: `${formatMs(cfg.wsRequestTimeoutMs)} webserver timeout is below the current p95 path budget of about ${formatMs(typicalPathMs)}. The largest contributor is ${slowest.name}.`,
+      action: "Increase the webserver request timeout or reduce the slow stage before treating this as app failure."
+    };
+  }
+
+  if (limiterDropped > 0) {
+    const mode = cfg.rlFailureMode === "bypass" ? "bypass" : "fail request";
+    return {
+      kind: "bad",
+      title: "Wrong decision: limiter capacity is too tight",
+      detail: `Limiter pressure reached ${Math.round(Math.max(limiterActivePct, limiterQueuePct))}% and the failure mode is ${mode}. This makes limiter overload visible before app admission.`,
+      action: cfg.rlFailureMode === "bypass"
+        ? "Raise limiter capacity or keep bypass only if the service has spare capacity."
+        : "Raise limiter capacity/queue timeout or intentionally accept fail-closed 503 behavior."
+    };
+  }
+
+  if (result.totals.limiterBypassed > 0) {
+    return {
+      kind: "warn",
+      title: "Decision tradeoff: limiter is bypassing",
+      detail: `${formatNum(result.totals.limiterBypassed)} requests skipped policy because limiter capacity was exhausted. That protects availability but moves pressure to Service and Downstream.`,
+      action: "Use this only when backend capacity is known to absorb the bypassed traffic."
+    };
+  }
+
+  if (appDropped > 0) {
+    return {
+      kind: "bad",
+      title: "Wrong decision: service capacity contract is too small",
+      detail: `Service active/pending pressure reached ${Math.round(Math.max(appActivePct, appQueuePct))}%, causing ${formatNum(appDropped)} service-side 503s.`,
+      action: "Reduce admitted traffic, increase service capacity, or tune service pending timeout/capacity."
+    };
+  }
+
+  if (depDropped > 0) {
+    return {
+      kind: "bad",
+      title: "Wrong decision: downstream is the tightest capacity",
+      detail: `Downstream active pressure reached ${Math.round(depActivePct)}%, causing ${formatNum(depDropped)} downstream 503s after the service tried to call it.`,
+      action: "Lower the limiter threshold or increase downstream concurrency before raising service capacity."
+    };
+  }
+
+  if (result.totals.rate429 > 0) {
+    return {
+      kind: "warn",
+      title: "Limiter policy is the active decision",
+      detail: `${formatNum(result.totals.rate429)} requests were rejected with 429. That is protecting ${formatNum(Math.max(0, result.totals.arrived - result.totals.enteredApp))} potential service admissions.`,
+      action: "If this is an example of protection, keep it. If it is unexpected, raise the tightest limiter rule."
+    };
+  }
+
+  const highest = Math.max(wsActivePct, wsQueuePct, limiterActivePct, limiterQueuePct, appActivePct, appQueuePct, depActivePct);
+  return {
+    kind: highest >= 70 ? "warn" : "ok",
+    title: highest >= 70 ? "No failure yet, but pressure is building" : "No wrong decision detected",
+    detail: highest >= 70
+      ? `The highest component pressure is ${Math.round(highest)}%, but no 429/503 failure path has triggered yet.`
+      : "The current run stays within the configured capacity and timeout contracts.",
+    action: highest >= 70 ? "Watch the highest-pressure stage before increasing traffic." : "Use the controls to create pressure and compare which contract fails first."
+  };
+}
+
 function renderStageCard(stage) {
+  const level = pressureLevel(stage.meterPct, stage.state);
   return `
     <article class="pressure-stage" data-state="${stage.state}">
       <div class="pressure-stage-head">
@@ -80,6 +177,10 @@ function renderStageCard(stage) {
       </div>
       <div class="stage-meter" aria-label="${stage.name} pressure">
         <span style="width: ${stage.meterPct}%"></span>
+      </div>
+      <div class="stage-pressure-level" data-kind="${level.kind}">
+        <span>${level.label} pressure</span>
+        <strong>${Math.round(stage.meterPct)}%</strong>
       </div>
       <dl>
         ${stage.metrics.map(({ name, value }) => `<div><dt>${name}</dt><dd>${value}</dd></div>`).join("")}
@@ -115,6 +216,19 @@ function renderPressureMap(result, baseline, cfg) {
   const depActivePct = pressurePct(result.queues.peakDepInflight, cfg.depMaxConcurrent);
   const limiterPendingWarn = result.queues.peakLimiterPending > 0 || result.limiterLatency.p95 > Math.max(50, cfg.latA * 0.25);
   const limiterRuleWarn = result.totals.rate429 > 0;
+  const analysis = buildCauseAnalysis(result, cfg, {
+    wsDropped,
+    limiterDropped,
+    appDropped,
+    depDropped,
+    wsActivePct,
+    wsQueuePct,
+    limiterActivePct,
+    limiterQueuePct,
+    appActivePct,
+    appQueuePct,
+    depActivePct
+  });
 
   const stages = [
     {
@@ -197,6 +311,13 @@ function renderPressureMap(result, baseline, cfg) {
     <div class="placement-note">
       <strong>Placement model</strong>
       <span>The webserver sits after traffic and owns the end-to-end request deadline. The limiter sits before app admission; limiter capacity failure can either return 503 or bypass to app, depending on the selected failure mode.</span>
+    </div>
+    <div class="cause-summary" data-kind="${analysis.kind}">
+      <div>
+        <strong>${analysis.title}</strong>
+        <span>${analysis.detail}</span>
+      </div>
+      <p>${analysis.action}</p>
     </div>
     <div class="pressure-flow" aria-label="System pressure flow">
       ${renderStageCard(stages[0])}

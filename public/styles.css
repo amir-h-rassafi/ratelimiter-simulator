@@ -481,6 +481,53 @@ button:hover {
   text-align: right;
 }
 
+.cause-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.46fr);
+  gap: 12px;
+  padding: 12px;
+  background: #f1f8f4;
+  border: 1px solid #ceead6;
+  border-left: 4px solid var(--green);
+  border-radius: 6px;
+}
+
+.cause-summary[data-kind="warn"] {
+  background: #fff8e6;
+  border-color: #fddc9c;
+  border-left-color: var(--amber);
+}
+
+.cause-summary[data-kind="bad"] {
+  background: #fce8e6;
+  border-color: #f5c1bc;
+  border-left-color: var(--red);
+}
+
+.cause-summary div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.cause-summary strong {
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.cause-summary span,
+.cause-summary p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.cause-summary p {
+  color: var(--text);
+}
+
 .pressure-flow {
   min-width: 1400px;
   display: grid;
@@ -613,6 +660,40 @@ button:hover {
 
 .pressure-stage[data-state="info"] .stage-meter span {
   background: #7b858f;
+}
+
+.stage-pressure-level {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  background: #f1f8f4;
+  border: 1px solid #ceead6;
+  border-radius: 6px;
+}
+
+.stage-pressure-level[data-kind="warn"] {
+  background: #fff8e6;
+  border-color: #fddc9c;
+}
+
+.stage-pressure-level[data-kind="bad"] {
+  background: #fce8e6;
+  border-color: #f5c1bc;
+}
+
+.stage-pressure-level span {
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.stage-pressure-level strong {
+  color: var(--text);
+  font-size: 0.76rem;
+  font-weight: 750;
 }
 
 .pressure-stage dl {
@@ -1309,6 +1390,10 @@ canvas:focus {
 
   .placement-note span {
     text-align: left;
+  }
+
+  .cause-summary {
+    grid-template-columns: 1fr;
   }
 }
 
