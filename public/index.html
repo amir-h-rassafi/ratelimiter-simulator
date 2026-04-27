@@ -387,17 +387,55 @@
       </section>
     </div>
 
-    <section class="panel seo-copy" aria-labelledby="seoTitle">
+    <section class="panel example-copy" aria-labelledby="examplesTitle">
       <div class="panel-heading">
         <div>
-          <p class="eyebrow">About</p>
-          <h2 id="seoTitle">What this simulator shows</h2>
-          <p class="panel-copy">Compact reference text for rate limiting, queue pressure, and failure behavior.</p>
+          <p class="eyebrow">Examples</p>
+          <h2 id="examplesTitle">Read the pressure map by asking what failed first</h2>
+          <p class="panel-copy">These are useful starting points for screenshots. Each example keeps most of the system calm and makes one decision visibly responsible.</p>
         </div>
       </div>
-      <div class="seo-copy-body">
-        <p>This rate limiter simulator models how incoming traffic moves through a high-capacity webserver, a rate-limiter decision path, app pending capacity, and a downstream dependency. It is designed to make HTTP 429 rate-limit rejects, HTTP 503 capacity failures, queue buildup, pending requests, latency distribution, and bottleneck behavior easier to understand in a distributed system.</p>
-        <p>The simulator supports fixed-window and sliding-window thinking for policy behavior, and it highlights how limiter rules protect backend capacity by reducing overload before app timeouts and downstream saturation create visible failures.</p>
+      <div class="example-copy-body">
+        <p>The point of the map is not just to count failures. It should make the bad decision obvious. If the limiter is slow and fail-closed, the Service can be perfectly healthy while users still see 503. If the webserver deadline is too short, the request can die at the front door even though no queue is full.</p>
+        <div class="example-table-wrap">
+          <table class="example-table">
+            <thead>
+              <tr>
+                <th>Story to show</th>
+                <th>Pressure pattern</th>
+                <th>Parameters to set</th>
+                <th>What the run shows</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Limiter is the problem</strong><span>The limiter cannot make decisions fast enough.</span></td>
+                <td>Limiter critical, Service low, Downstream low</td>
+                <td>RPS 100, limiter latency 500ms, limiter active 1, limiter pending 0, fail request with 503</td>
+                <td>3,010 arrived. 2,949 limiter 503. Service peak stays at 1 active request.</td>
+              </tr>
+              <tr>
+                <td><strong>Webserver deadline is too tight</strong><span>The request times out before the path can finish.</span></td>
+                <td>Webserver failing, limiter/service/downstream only partly busy</td>
+                <td>RPS 80, webserver timeout 500ms, limiter latency 400ms, service 100ms, downstream 100ms</td>
+                <td>2,408 arrived. 2,360 webserver timeout 503. No limiter, service, or downstream capacity failure.</td>
+              </tr>
+              <tr>
+                <td><strong>Service is too small</strong><span>The app tier admits more work than it can finish.</span></td>
+                <td>Service critical, Downstream normal</td>
+                <td>RPS 120, service active 6, service pending 20, service wait timeout 250ms, service latency 400ms</td>
+                <td>3,612 arrived. 3,142 service 503. Downstream is not the first failing contract.</td>
+              </tr>
+              <tr>
+                <td><strong>Downstream is the bottleneck</strong><span>The app is fine, but the dependency cannot accept enough calls.</span></td>
+                <td>Downstream critical, Service low to medium</td>
+                <td>RPS 90, service latency 40ms, downstream active 3, downstream latency 600ms</td>
+                <td>2,709 arrived. 2,550 downstream 503. Service has no pending timeout failure.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="example-note">After setting a row, run the simulation and screenshot the System Pressure Map. The most useful screenshot is the one where the red component is not the same as the component people first suspect.</p>
       </div>
     </section>
 
