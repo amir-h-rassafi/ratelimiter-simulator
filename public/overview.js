@@ -98,7 +98,7 @@ function buildCauseAnalysis(result, cfg, values) {
     ].sort((a, b) => b.ms - a.ms)[0];
     return {
       kind: "bad",
-      title: "Webserver deadline is being hit first",
+      title: "Latency budget imbalance",
       detail: `The ${formatMs(cfg.wsRequestTimeoutMs)} webserver timeout is shorter than the current p95 path budget of about ${formatMs(typicalPathMs)}. The largest contributor is ${slowest.name}.`,
       action: "This is a front-door timeout story: the request can fail before the service itself is overloaded."
     };
@@ -108,7 +108,7 @@ function buildCauseAnalysis(result, cfg, values) {
     const mode = cfg.rlFailureMode === "bypass" ? "bypass" : "fail request";
     return {
       kind: "bad",
-      title: "Limiter is the first constrained component",
+      title: "Limiter capacity imbalance",
       detail: `Limiter pressure reached ${Math.round(Math.max(limiterActivePct, limiterQueuePct))}% and the failure mode is ${mode}. The service may still be healthy because these requests fail before app admission.`,
       action: cfg.rlFailureMode === "bypass"
         ? "Bypass keeps availability higher, but it shifts traffic pressure to Service and Downstream."
@@ -119,7 +119,7 @@ function buildCauseAnalysis(result, cfg, values) {
   if (result.totals.limiterBypassed > 0) {
     return {
       kind: "warn",
-      title: "Decision tradeoff: limiter is bypassing",
+      title: "Limiter capacity imbalance: bypassing",
       detail: `${formatNum(result.totals.limiterBypassed)} requests skipped policy because limiter capacity was exhausted. That protects availability but moves pressure to Service and Downstream.`,
       action: "Use this only when backend capacity is known to absorb the bypassed traffic."
     };
@@ -128,7 +128,7 @@ function buildCauseAnalysis(result, cfg, values) {
   if (appDropped > 0) {
     return {
       kind: "bad",
-      title: "Service capacity is the first limit hit",
+      title: "Service capacity imbalance",
       detail: `Service active/pending pressure reached ${Math.round(Math.max(appActivePct, appQueuePct))}%, causing ${formatNum(appDropped)} service-side 503s.`,
       action: "This is a service overload story: requests pass the limiter, then wait or fail inside the app tier."
     };
@@ -137,7 +137,7 @@ function buildCauseAnalysis(result, cfg, values) {
   if (depDropped > 0) {
     return {
       kind: "bad",
-      title: "Downstream is the first constrained dependency",
+      title: "Downstream capacity imbalance",
       detail: `Downstream active pressure reached ${Math.round(depActivePct)}%, causing ${formatNum(depDropped)} downstream 503s after the service tried to call it.`,
       action: "This is a dependency protection story: the service can look fine while the downstream call path is saturated."
     };
@@ -155,11 +155,11 @@ function buildCauseAnalysis(result, cfg, values) {
   const highest = Math.max(wsActivePct, wsQueuePct, limiterActivePct, limiterQueuePct, appActivePct, appQueuePct, depActivePct);
   return {
     kind: highest >= 70 ? "warn" : "ok",
-    title: highest >= 70 ? "No failure yet, but pressure is building" : "No limit is failing in this run",
+    title: highest >= 70 ? "Pressure is building, but still balanced" : "System is balanced in this run",
     detail: highest >= 70
       ? `The highest component pressure is ${Math.round(highest)}%, but no 429/503 failure path has triggered yet.`
       : "The current run stays within the configured capacity and timeout limits.",
-    action: highest >= 70 ? "Watch the highest-pressure stage before increasing traffic." : "Use the controls to create pressure and compare which limit fails first."
+    action: highest >= 70 ? "Watch the highest-pressure stage before increasing traffic." : "Use the controls to create pressure and compare where imbalance appears."
   };
 }
 
@@ -286,7 +286,7 @@ function renderPressureMap(result, baseline, cfg) {
     },
     {
       name: "Dependency",
-      caption: "Downstream bottleneck",
+      caption: "Downstream pressure mismatch",
       state: stageState({ hardFailure: depDropped, activePct: depActivePct }),
       meterPct: depActivePct,
       metrics: [

@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="google-site-verification" content="06M5RBWS0Lll_VwhlUY5cWr3p5oT03Rc3cM-Q8l1qVU" />
   <title>Rate Limiter Simulator for HTTP 429, HTTP 503, Queueing, and Latency</title>
-  <meta name="description" content="Interactive rate limiter simulator for HTTP 429, HTTP 503, queueing, pending requests, latency distribution, and downstream bottlenecks in distributed systems." />
+  <meta name="description" content="Interactive rate limiter simulator for HTTP 429, HTTP 503, queueing, pending requests, latency distribution, and pressure imbalance in distributed systems." />
   <meta name="robots" content="index,follow,max-image-preview:large" />
   <link rel="canonical" href="https://ratelimiter-simulator.amir-rassafi.workers.dev/" />
   <meta property="og:type" content="website" />
   <meta property="og:title" content="Rate Limiter Simulator for HTTP 429, HTTP 503, Queueing, and Latency" />
-  <meta property="og:description" content="Visualize distributed-system rate limiting, queue buildup, latency, and downstream bottlenecks with an interactive browser simulator." />
+  <meta property="og:description" content="Visualize distributed-system rate limiting, queue buildup, latency, and pressure imbalance with an interactive browser simulator." />
   <meta property="og:url" content="https://ratelimiter-simulator.amir-rassafi.workers.dev/" />
   <meta property="og:site_name" content="Rate Limiter Simulator" />
   <meta property="og:image" content="https://ratelimiter-simulator.amir-rassafi.workers.dev/og-image.png" />
@@ -19,7 +19,7 @@
   <meta property="og:image:alt" content="Rate Limiter Simulator — incoming traffic, 429 rate-limited, and 503 unavailable over time" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Rate Limiter Simulator for HTTP 429, HTTP 503, Queueing, and Latency" />
-  <meta name="twitter:description" content="Interactive browser simulator for rate limiting, queue pressure, latency distribution, and bottleneck analysis." />
+  <meta name="twitter:description" content="Interactive browser simulator for rate limiting, queue pressure, latency distribution, and imbalance analysis." />
   <meta name="twitter:image" content="https://ratelimiter-simulator.amir-rassafi.workers.dev/og-image.png" />
   <meta name="twitter:image:alt" content="Rate Limiter Simulator — incoming traffic, 429 rate-limited, and 503 unavailable over time" />
   <script type="application/ld+json">{
@@ -50,7 +50,7 @@
       <div class="hero">
         <p class="eyebrow">Simulator</p>
         <h1>Rate Limiter Simulator</h1>
-        <p>Traffic flows through a high-capacity webserver, a rate-limiter decision path, modeled app pending requests, and a downstream dependency. The simulator shows where pressure accumulates, which limit fails first, and how much the limiter protects the system.</p>
+        <p>Traffic flows through a high-capacity webserver, a rate-limiter decision path, modeled app pending requests, and a downstream dependency. The simulator shows where pressure accumulates, where the system falls out of balance, and how much the limiter protects.</p>
       </div>
       <div class="header-actions">
         <button id="runBtn" class="run-button" type="button">
@@ -391,12 +391,12 @@
       <div class="panel-heading">
         <div>
           <p class="eyebrow">Examples</p>
-          <h2 id="examplesTitle">Read the pressure map by asking what failed first</h2>
-          <p class="panel-copy">These are useful starting points for screenshots. Each example keeps most of the system calm and makes one decision visibly responsible.</p>
+          <h2 id="examplesTitle">Read the pressure map by looking for imbalance</h2>
+          <p class="panel-copy">These are useful starting points for screenshots. Each example keeps most of the system calm and makes one pressure mismatch visible.</p>
         </div>
       </div>
       <div class="example-copy-body">
-        <p>The point of the map is not just to count failures. It should make the first failing limit easy to see. If the limiter is slow and fail-closed, the Service can be perfectly healthy while users still see 503. If the webserver deadline is too short, the request can die at the front door even though no queue is full.</p>
+        <p>The point of the map is not just to count failures. It should show where the system is out of balance. If the limiter is slow and fail-closed, the Service can be perfectly healthy while users still see 503. If the webserver deadline is too short, the request can die at the front door even though no queue is full.</p>
         <div class="example-table-wrap">
           <table class="example-table">
             <thead>
@@ -409,25 +409,25 @@
             </thead>
             <tbody>
               <tr>
-                <td><strong>Limiter is the problem</strong><span>The limiter cannot make decisions fast enough.</span></td>
+                <td><strong>Limiter capacity imbalance</strong><span>The limiter cannot make decisions fast enough for the offered traffic.</span></td>
                 <td>Limiter critical, Service low, Downstream low</td>
                 <td>RPS 100, limiter latency 500ms, limiter active 1, limiter pending 0, fail request with 503</td>
                 <td>3,010 arrived. 2,949 limiter 503. Service peak stays at 1 active request.</td>
               </tr>
               <tr>
-                <td><strong>Webserver deadline is too tight</strong><span>The request times out before the path can finish.</span></td>
+                <td><strong>Latency budget imbalance</strong><span>The request times out before the path can finish.</span></td>
                 <td>Webserver failing, limiter/service/downstream only partly busy</td>
                 <td>RPS 80, webserver timeout 500ms, limiter latency 400ms, service 100ms, downstream 100ms</td>
                 <td>2,408 arrived. 2,360 webserver timeout 503. No limiter, service, or downstream capacity failure.</td>
               </tr>
               <tr>
-                <td><strong>Service is too small</strong><span>The app tier admits more work than it can finish.</span></td>
+                <td><strong>Service capacity imbalance</strong><span>The app tier is asked to hold more work than it can finish.</span></td>
                 <td>Service critical, Downstream normal</td>
                 <td>RPS 120, service active 6, service pending 20, service wait timeout 250ms, service latency 400ms</td>
-                <td>3,612 arrived. 3,142 service 503. Downstream is not the first limit hit.</td>
+                <td>3,612 arrived. 3,142 service 503. Downstream is not carrying the imbalance.</td>
               </tr>
               <tr>
-                <td><strong>Downstream is the bottleneck</strong><span>The app is fine, but the dependency cannot accept enough calls.</span></td>
+                <td><strong>Downstream capacity imbalance</strong><span>The app is fine, but the dependency cannot accept enough calls.</span></td>
                 <td>Downstream critical, Service low to medium</td>
                 <td>RPS 90, service latency 40ms, downstream active 3, downstream latency 600ms</td>
                 <td>2,709 arrived. 2,550 downstream 503. Service has no pending timeout failure.</td>
@@ -435,7 +435,7 @@
             </tbody>
           </table>
         </div>
-        <p class="example-note">After setting a row, run the simulation and screenshot the System Pressure Map. The most useful screenshot is the one where the red component is not the same as the component people first suspect.</p>
+        <p class="example-note">After setting a row, run the simulation and screenshot the System Pressure Map. The most useful screenshot is the one where the red component shows the pressure mismatch people usually miss.</p>
       </div>
     </section>
 
