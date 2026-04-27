@@ -98,9 +98,9 @@ function buildCauseAnalysis(result, cfg, values) {
     ].sort((a, b) => b.ms - a.ms)[0];
     return {
       kind: "bad",
-      title: "Wrong decision: request deadline is too small",
-      detail: `${formatMs(cfg.wsRequestTimeoutMs)} webserver timeout is below the current p95 path budget of about ${formatMs(typicalPathMs)}. The largest contributor is ${slowest.name}.`,
-      action: "Increase the webserver request timeout or reduce the slow stage before treating this as app failure."
+      title: "Webserver deadline is being hit first",
+      detail: `The ${formatMs(cfg.wsRequestTimeoutMs)} webserver timeout is shorter than the current p95 path budget of about ${formatMs(typicalPathMs)}. The largest contributor is ${slowest.name}.`,
+      action: "This is a front-door timeout story: the request can fail before the service itself is overloaded."
     };
   }
 
@@ -108,11 +108,11 @@ function buildCauseAnalysis(result, cfg, values) {
     const mode = cfg.rlFailureMode === "bypass" ? "bypass" : "fail request";
     return {
       kind: "bad",
-      title: "Wrong decision: limiter capacity is too tight",
-      detail: `Limiter pressure reached ${Math.round(Math.max(limiterActivePct, limiterQueuePct))}% and the failure mode is ${mode}. This makes limiter overload visible before app admission.`,
+      title: "Limiter is the first constrained component",
+      detail: `Limiter pressure reached ${Math.round(Math.max(limiterActivePct, limiterQueuePct))}% and the failure mode is ${mode}. The service may still be healthy because these requests fail before app admission.`,
       action: cfg.rlFailureMode === "bypass"
-        ? "Raise limiter capacity or keep bypass only if the service has spare capacity."
-        : "Raise limiter capacity/queue timeout or intentionally accept fail-closed 503 behavior."
+        ? "Bypass keeps availability higher, but it shifts traffic pressure to Service and Downstream."
+        : "Fail-closed protects Service and Downstream, but users see limiter-side 503."
     };
   }
 
@@ -128,18 +128,18 @@ function buildCauseAnalysis(result, cfg, values) {
   if (appDropped > 0) {
     return {
       kind: "bad",
-      title: "Wrong decision: service capacity contract is too small",
+      title: "Service capacity is the first limit hit",
       detail: `Service active/pending pressure reached ${Math.round(Math.max(appActivePct, appQueuePct))}%, causing ${formatNum(appDropped)} service-side 503s.`,
-      action: "Reduce admitted traffic, increase service capacity, or tune service pending timeout/capacity."
+      action: "This is a service overload story: requests pass the limiter, then wait or fail inside the app tier."
     };
   }
 
   if (depDropped > 0) {
     return {
       kind: "bad",
-      title: "Wrong decision: downstream is the tightest capacity",
+      title: "Downstream is the first constrained dependency",
       detail: `Downstream active pressure reached ${Math.round(depActivePct)}%, causing ${formatNum(depDropped)} downstream 503s after the service tried to call it.`,
-      action: "Lower the limiter threshold or increase downstream concurrency before raising service capacity."
+      action: "This is a dependency protection story: the service can look fine while the downstream call path is saturated."
     };
   }
 
@@ -155,11 +155,11 @@ function buildCauseAnalysis(result, cfg, values) {
   const highest = Math.max(wsActivePct, wsQueuePct, limiterActivePct, limiterQueuePct, appActivePct, appQueuePct, depActivePct);
   return {
     kind: highest >= 70 ? "warn" : "ok",
-    title: highest >= 70 ? "No failure yet, but pressure is building" : "No wrong decision detected",
+    title: highest >= 70 ? "No failure yet, but pressure is building" : "No limit is failing in this run",
     detail: highest >= 70
       ? `The highest component pressure is ${Math.round(highest)}%, but no 429/503 failure path has triggered yet.`
-      : "The current run stays within the configured capacity and timeout contracts.",
-    action: highest >= 70 ? "Watch the highest-pressure stage before increasing traffic." : "Use the controls to create pressure and compare which contract fails first."
+      : "The current run stays within the configured capacity and timeout limits.",
+    action: highest >= 70 ? "Watch the highest-pressure stage before increasing traffic." : "Use the controls to create pressure and compare which limit fails first."
   };
 }
 
