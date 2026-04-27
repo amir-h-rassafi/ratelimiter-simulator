@@ -146,7 +146,9 @@ function loadStateFromCookie() {
 function decodeBase64Url(value) {
   const normalized = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
   const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
-  return decodeURIComponent(escape(window.atob(padded)));
+  const binary = window.atob(padded);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
 }
 
 function loadStateFromUrl() {
@@ -181,9 +183,9 @@ function saveStateToCookie() {
   setCookie(COOKIE_NAME, JSON.stringify(state), COOKIE_TTL_SEC);
 }
 
-function applyStateToUi(saved) {
+function applyStateToUi(saved, options = {}) {
   if (!saved) return;
-  if (saved.version !== UI_STATE_VERSION) return;
+  if (!options.ignoreVersion && saved.version !== UI_STATE_VERSION) return;
 
   if (saved.controls) {
     for (const id of CONTROL_IDS) {
@@ -741,7 +743,9 @@ function boot() {
   }
 
   addWindowRow(1000, 30);
-  applyStateToUi(loadStateFromUrl() || loadStateFromCookie());
+  const urlState = loadStateFromUrl();
+  if (urlState) applyStateToUi(urlState, { ignoreVersion: true });
+  else applyStateToUi(loadStateFromCookie());
   runAndRender();
   updateRunButton();
 }

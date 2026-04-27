@@ -51,6 +51,10 @@ const {
   assert(review.summary.enteredWebserver > 0);
   assert("peakWsQueue" in review.summary);
   assert(review.uiUrl.startsWith("https://example.test/simulator/?state="), "component review should include a configurable shareable UI URL");
+  assert.strictEqual(review.ui.url, review.uiUrl);
+  assert.strictEqual(review.ui.expected.rps, 90);
+  assert.strictEqual(review.ui.expected.windows[0].limit, 30);
+  assert(review.ui.note.includes("state query parameter"));
 }
 
 {
@@ -74,6 +78,8 @@ const {
   });
   assert(comparison.baseUiUrl.startsWith("https://preview.example.test/?state="), "comparison should include configurable base UI URL");
   assert(comparison.candidateUiUrl.startsWith("https://preview.example.test/?state="), "comparison should include configurable candidate UI URL");
+  assert.deepStrictEqual(comparison.baseUi.expected.windows, []);
+  assert.strictEqual(comparison.candidateUi.expected.windows[0].limit, 20);
   assert(comparison.candidate.rate429 > comparison.base.rate429);
   assert(comparison.candidate.rate503 <= comparison.base.rate503);
   // Sign regression: candidate has a limiter, base does not. Candidate should

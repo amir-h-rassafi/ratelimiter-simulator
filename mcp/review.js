@@ -146,11 +146,45 @@ function makeUiState(config) {
   };
 }
 
+function summarizeUiState(config) {
+  return {
+    durationSec: config.durationSec,
+    stepMs: config.stepMs,
+    rps: config.rps,
+    burstiness: config.burstiness,
+    windows: Array.isArray(config.windows) ? config.windows.map((w) => ({ ...w })) : [],
+    wsMaxConcurrent: config.wsMaxConcurrent,
+    wsRequestTimeoutMs: config.wsRequestTimeoutMs,
+    appMaxConcurrent: config.maxConcurrent,
+    appQueueCapacity: config.queueCapacity,
+    appQueueTimeoutMs: config.maxQueueWaitMs,
+    dependencyMaxConcurrent: config.depMaxConcurrent,
+    appLatency: { distribution: config.latencyDist, a: config.latA, b: config.latB },
+    dependencyLatency: { distribution: config.depLatencyDist, a: config.depLatA, b: config.depLatB },
+    limiterLatency: { distribution: config.rlLatencyDist, a: config.rlLatA, b: config.rlLatB }
+  };
+}
+
 function makeUiUrl(config, baseUrl = DEFAULT_UI_BASE_URL) {
   const state = encodeBase64Url(JSON.stringify(makeUiState(config)));
   const url = new URL(baseUrl);
   url.searchParams.set("state", state);
   return url.toString();
+}
+
+function makeUiShare(config, baseUrl = DEFAULT_UI_BASE_URL) {
+  const uiState = makeUiState(config);
+  const stateParam = encodeBase64Url(JSON.stringify(uiState));
+  const url = new URL(baseUrl);
+  url.searchParams.set("state", stateParam);
+  return {
+    url: url.toString(),
+    baseUrl: url.origin + url.pathname,
+    stateParam,
+    stateVersion: UI_STATE_VERSION,
+    expected: summarizeUiState(config),
+    note: "If this link opens with different values, deploy the UI version that supports the state query parameter or clear old saved UI state."
+  };
 }
 
 function reviewRateLimitConfig(config) {
@@ -306,7 +340,8 @@ function normalizeComponentPath(input = {}) {
 function simulateScenario(input = {}) {
   const config = mergeConfig(defaultSimulationConfig(), input.config || input);
   const result = runSimulation(config);
-  return { config, uiUrl: makeUiUrl(config, input.uiBaseUrl), summary: summarizeResult(result), warnings: reviewRateLimitConfig(config), result };
+  const ui = makeUiShare(config, input.uiBaseUrl);
+  return { config, uiUrl: ui.url, ui, summary: summarizeResult(result), warnings: reviewRateLimitConfig(config), result };
 }
 
 function compareScenarios(input = {}) {
@@ -337,6 +372,8 @@ function compareScenarios(input = {}) {
     candidate: candidate.summary,
     baseUiUrl: makeUiUrl(base.config, input.uiBaseUrl),
     candidateUiUrl: makeUiUrl(candidate.config, input.uiBaseUrl),
+    baseUi: makeUiShare(base.config, input.uiBaseUrl),
+    candidateUi: makeUiShare(candidate.config, input.uiBaseUrl),
     delta,
     warnings: [...new Set([...base.warnings, ...candidate.warnings])]
   };
@@ -348,6 +385,7 @@ function reviewComponentPath(input = {}) {
   return {
     normalizedConfig: normalized.config,
     uiUrl: makeUiUrl(normalized.config, input.uiBaseUrl),
+    ui: makeUiShare(normalized.config, input.uiBaseUrl),
     collapse: normalized.collapse,
     assumptions: normalized.assumptions,
     warnings: normalized.warnings,
@@ -363,6 +401,7 @@ module.exports = {
   reviewRateLimitConfig,
   makeUiState,
   makeUiUrl,
+  makeUiShare,
   simulateScenario,
   compareScenarios,
   reviewComponentPath
