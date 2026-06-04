@@ -8,16 +8,16 @@ Demo: https://ratelimiter-simulator.amir-rassafi.workers.dev/
 
 ```mermaid
 flowchart LR
-  A[Traffic arrivals] --> W[Webserver capacity and deadline]
-  W --> B[Rate limit rules]
-  B -->|allowed| C[App capacity]
-  B -->|rate limited| E[429]
-  C -->|available| D[Dependency capacity]
-  C -->|full| Q[App pending]
-  Q -->|slot opens| D
-  W -->|deadline, pending timeout, or full| F[503]
-  D -->|served| S[Served]
-  D -->|capacity failure| F
+  A["Traffic arrivals"] --> W["Webserver capacity and deadline"]
+  W --> B["Rate limit rules"]
+  B -- "allowed" --> C["App capacity"]
+  B -- "rate limited" --> E["HTTP 429"]
+  C -- "available" --> D["Dependency capacity"]
+  C -- "full" --> Q["App pending"]
+  Q -- "slot opens" --> D
+  W -- "deadline, pending timeout, or full" --> F["HTTP 503"]
+  D -- "served" --> S["Served"]
+  D -- "capacity failure" --> F
 ```
 
 ## MCP
